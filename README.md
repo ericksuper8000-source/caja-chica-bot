@@ -38,3 +38,28 @@ docker compose up -d
 
 # Verificar el estado de los contenedores
 docker compose ps
+
+
+⚙️ Integración Continua (CI/CD) y Calidad de Código
+Este proyecto implementa pipelines de automatización tanto en GitHub Actions como en GitLab CI/CD para garantizar la estabilidad, el formato y la consistencia del código en cada commit o Pull Request.
+
+El flujo de trabajo ejecuta de manera secuencial las siguientes herramientas de análisis estático:
+
+Black: Formateador de código estricto para asegurar un estilo homogéneo.
+
+Ruff: Linter de alto rendimiento para identificar errores, código muerto y malas prácticas.
+
+Mypy (--strict): Validador de tipado estático para asegurar la integridad de los tipos en la aplicación.
+
+🧪 Verificación Local
+Para asegurar que los pipelines pasen exitosamente antes de hacer un push, se pueden ejecutar los mismos comandos localmente en el entorno virtual:
+
+Bash
+# 1. Formatear y verificar estilo
+black --check app/ workers/ services/ tests/
+
+# 2. Analizar el código con el linter
+ruff check app/ workers/ services/ tests/
+
+# 3. Validar el tipado estático estrictamente
+mypy --strict app/
