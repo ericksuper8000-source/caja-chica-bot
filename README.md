@@ -10,18 +10,20 @@ El proyecto sigue un patrón de microservicios contenerizados y asíncronos para
 - **Procesamiento Asíncrono:** Celery Task Queue
 - **Message Broker & Cache:** Redis
 - **Base de Datos:** PostgreSQL 15+ (Auditoría, logs y data isolation)
+- **APIs de IA:** OpenAI Whisper API (Transcripción) + GPT-4o-mini (Extracción Estructurada)
 - **Estrategia de Despliegue:** Contenedores aislados mediante Docker & Docker Compose
+- **Proxy Inverso:** Caddy Server (SSL Automático)
 
 ---
 
 ## 🛠️ Estado del Proyecto e Infraestructura Local
 
-Actualmente, el proyecto se encuentra en desarrollo activo de su MVP. La infraestructura base local está completamente configurada y validada:
+El proyecto se encuentra en desarrollo activo de su MVP. Hemos consolidado la infraestructura base y la capa de comunicación y seguridad inicial con Meta:
 
-- [x] Arquitectura de contenedores multi-stage (Docker)
-- [x] Orquestación de servicios en red local (FastAPI, Worker, Redis, DB)
-- [x] Sincronización e integración de repositorios remotos simultáneos (GitHub/GitLab)
-- [x] Políticas de protección de ramas en la nube (`main` protegida, desarrollo sobre `develop`)
+- [x] **Fase 0: Infraestructura Base Local:** Arquitectura de contenedores multi-stage (FastAPI, Worker, Redis, DB), sincronización de repositorios remotos simultáneos (GitHub/GitLab), políticas de ramas (`main` protegida, desarrollo en `develop`) y pipelines de CI (Black, Ruff, Mypy).
+- [x] **Paso 1.1: Handshake con Meta:** Endpoint `GET /v1/whatsapp/webhook` completamente funcional para resolver el desafío `hub.challenge`.
+- [x] **Paso 1.2: Validación de Payload:** Endpoint `POST /v1/whatsapp/webhook` integrado con modelos de validación Pydantic (`WebhookPayload`).
+- [x] **Paso 1.3: Escudo Criptográfico:** Verificación robusta de firmas HMAC-SHA256 (`X-Hub-Signature-256`) implementada de forma nativa en `app/core/security.py` para bloquear orígenes no legítimos.
 
 ---
 
@@ -30,35 +32,37 @@ Actualmente, el proyecto se encuentra en desarrollo activo de su MVP. La infraes
 Para levantar el entorno local de forma contenerizada, asegúrese de tener Docker Desktop activo y ejecute:
 
 ```bash
-# Clonar y acceder al directorio
+# 1. Clonar y acceder al directorio del proyecto
 cd caja-chica-bot
 
-# Levantar los 4 servicios en segundo plano
+# 2. Inicializar tus secretos locales a partir de la plantilla
+cp .env.example .env
+
+# 3. Levantar los 4 servicios en segundo plano
 docker compose up -d
 
-# Verificar el estado de los contenedores
+# 4. Verificar el estado operativo de los contenedores
 docker compose ps
 
-
 ⚙️ Integración Continua (CI/CD) y Calidad de Código
-Este proyecto implementa pipelines de automatización tanto en GitHub Actions como en GitLab CI/CD para garantizar la estabilidad, el formato y la consistencia del código en cada commit o Pull Request.
+Este proyecto implementa pipelines de automatización idénticos tanto en GitHub Actions como en GitLab CI/CD para garantizar la estabilidad, el formato y la consistencia estricta del tipado en cada commit o Pull Request.
 
 El flujo de trabajo ejecuta de manera secuencial las siguientes herramientas de análisis estático:
 
-Black: Formateador de código estricto para asegurar un estilo homogéneo.
+Black: Formateador estricto para un estilo de código homogéneo.
 
-Ruff: Linter de alto rendimiento para identificar errores, código muerto y malas prácticas.
+Ruff: Linter de alto rendimiento para identificar errores y código muerto.
 
-Mypy (--strict): Validador de tipado estático para asegurar la integridad de los tipos en la aplicación.
+Mypy (--strict): Validador de tipado estático obligatorio para mitigar errores en tiempo de ejecución.
 
 🧪 Verificación Local
-Para asegurar que los pipelines pasen exitosamente antes de hacer un push, se pueden ejecutar los mismos comandos localmente en el entorno virtual:
+Para asegurar que los pipelines pasen exitosamente antes de hacer un push a develop, se pueden ejecutar los mismos comandos localmente en el entorno virtual o contenedor:
 
 Bash
 # 1. Formatear y verificar estilo
 black --check app/ workers/ services/ tests/
 
-# 2. Analizar el código con el linter
+# 2. Analizar el código con el linter ruff
 ruff check app/ workers/ services/ tests/
 
 # 3. Validar el tipado estático estrictamente
