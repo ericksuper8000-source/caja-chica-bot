@@ -1,14 +1,9 @@
 from pydantic import BaseModel
+from typing import Any  # 👈 Importamos Any para el tipado estricto del dict
 
 
-# Este es el molde básico para entender quién nos escribe y qué nos dice
-class MensajeTexto(BaseModel):
-    id: str
-    texto: str
-    remitente: str  # El número de teléfono de la persona (ej: "50688888888")
-
-
-# Este es el molde del paquete grande que nos enviará Meta
+# Asegúrate de que el modelo se vea estructurado de esta forma:
 class WebhookPayload(BaseModel):
     object: str
-    entry: list[dict]  # Por ahora lo dejamos flexible para inspeccionar cómo viene
+    # Cambia el 'dict' plano por 'dict[str, Any]' en el campo correspondiente
+    entry: list[dict[str, Any]]
