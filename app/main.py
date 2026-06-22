@@ -1,13 +1,7 @@
-from fastapi import (
-    FastAPI,
-    Query,
-    HTTPException,
-    Depends,
-    Request,
-)  # 👈 Agregamos Depends y Request
+from fastapi import FastAPI, Query, HTTPException, Depends
 from fastapi.responses import PlainTextResponse
 from app.schemas.whatsapp import WebhookPayload
-from app.core.security import validar_firma_whatsapp  # 👈 Importamos nuestro escáner
+from app.core.security import validar_firma_whatsapp
 
 app = FastAPI(title="Caja Chica Bot API", version="0.1.0")
 
@@ -27,8 +21,8 @@ async def verificar_webhook(
     hub_verify_token: str = Query(None, alias="hub.verify_token"),
     hub_challenge: str = Query(None, alias="hub.challenge"),
 ) -> str:
-    """
-    Paso 1.1: Resuelve el desafío de verificación (handshake) de Meta API.
+    """Paso 1.1: Resuelve el desafío de verificación (handshake) de Meta API.
+
     Devuelve el hub.challenge en texto plano si el token coincide.
     """
     if hub_mode == "subscribe" and hub_verify_token == TOKEN_VERIFICACION_TEMPORAL:
@@ -41,8 +35,8 @@ async def verificar_webhook(
 # 🔐 Aquí agregamos el guarda de seguridad usando Depends(validar_firma_whatsapp)
 @app.post("/v1/whatsapp/webhook", dependencies=[Depends(validar_firma_whatsapp)])
 async def recibir_mensaje(payload: WebhookPayload) -> dict[str, str]:
-    """
-    Paso 1.2 & 1.3: Recibe las notificaciones de mensajes de Meta.
+    """Paso 1.2 & 1.3: Recibe las notificaciones de mensajes de Meta.
+
     Valida la estructura con Pydantic y el origen con X-Hub-Signature-256.
     """
     # Si llega aquí, significa que pasó el escáner criptográfico con éxito

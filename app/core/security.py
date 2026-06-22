@@ -1,5 +1,6 @@
-import hmac
 import hashlib
+import hmac
+from typing import Optional
 from fastapi import Header, HTTPException, Request
 
 # En el siguiente paso leeremos esto dinámicamente, por ahora lo dejamos fijo para la prueba
@@ -7,11 +8,12 @@ APP_SECRET = "mi_clave_secreta_de_meta_super_segura"
 
 
 async def validar_firma_whatsapp(
-    request: Request, x_hub_signature_256: str = Header(None)
+    request: Request, x_hub_signature_256: Optional[str] = Header(None)
 ) -> None:
-    """
-    Paso 1.3: Verifica que el paquete venga de Meta calculando el hash HMAC-SHA256
-    del cuerpo de la petición y comparándolo con el encabezado X-Hub-Signature-256.
+    """Paso 1.3: Verifica que el paquete venga de Meta calculando el hash
+
+    HMAC-SHA256 del cuerpo de la petición y comparándolo con el encabezado
+    X-Hub-Signature-256.
     """
     # 1. Si no viene el sello en la caja, cerramos la puerta de inmediato
     if not x_hub_signature_256:
