@@ -17,7 +17,7 @@ def test_config_falla_si_faltan_variables_obligatorias() -> None:
     with patch.dict("os.environ", {}, clear=True):
         # 3. Ahora sí, le decimos a pytest que espere el fallo de validación de Pydantic
         with pytest.raises(ValidationError) as exc_info:
-            from app.config import Settings
+            from app.config import Settings  # noqa: F401
 
         # 4. Verificamos que contenga los errores de los campos críticos requeridos
         errors = str(exc_info.value)
