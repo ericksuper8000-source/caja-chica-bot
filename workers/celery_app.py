@@ -1,15 +1,24 @@
-import os
 from celery import Celery
+from app.config import settings
 
-redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
+# Inicializamos la aplicación de Celery asignándole un nombre identificable
 celery_app = Celery(
     "caja_chica_workers",
-    broker=redis_url,
-    backend=redis_url,
+    broker=settings.REDIS_URL,
+    backend=settings.REDIS_URL,
 )
 
+# Configuración de optimización para el manejo de tareas distribuidas
 celery_app.conf.update(
-    task_track_started=True,
-    task_time_limit=300,
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="America/Costa_Rica",
+    enable_utc=True,
+    # Asegura que el worker no se quede con tareas atrapadas si se cae un proceso
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
 )
+
+# Definimos los módulos donde Celery buscará las tareas asíncronas automáticamente
+celery_app.autodiscover_tasks(["workers"])
