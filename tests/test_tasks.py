@@ -1,7 +1,5 @@
 import sys
 from unittest.mock import MagicMock, patch
-import pytest
-
 
 def test_download_audio_task_exito() -> None:
     """Valida el flujo exitoso de la tarea asíncrona simulando las
