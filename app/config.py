@@ -30,5 +30,5 @@ class Settings(BaseSettings):
     )
 
 
-# Instancia global para ser importada en los servicios de la aplicación
-settings = Settings()
+# Instancia global para ser importada en toda la aplicación
+settings = Settings()  # type: ignore[call-arg]
