@@ -34,10 +34,17 @@ async def test_transcribir_audio_whisper_exito() -> None:
 
         mock_create = AsyncMock(return_value=mock_transcription_response)
 
-        with patch("services.openai_service.client.audio.transcriptions.create", mock_create):
-            resultado = await transcribir_audio_whisper("/tmp/caja_chica/audio_test.ogg")
+        with patch(
+            "services.openai_service.client.audio.transcriptions.create", mock_create
+        ):
+            resultado = await transcribir_audio_whisper(
+                "/tmp/caja_chica/audio_test.ogg"
+            )
 
-            assert resultado == "Mae, gasté 5 rojos en gasolina para el pickup de la empresa"
+            assert (
+                resultado
+                == "Mae, gasté 5 rojos en gasolina para el pickup de la empresa"
+            )
             mock_create.assert_called_once_with(
                 model="whisper-1",
                 file=mock_file_instance,
