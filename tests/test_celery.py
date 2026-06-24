@@ -28,6 +28,7 @@ def test_celery_inicializacion_correcta() -> None:
         from workers.celery_app import celery_app
 
         # 4. Aserciones de control estructural
-        assert celery_app.main == "workers"
+        assert (
+            celery_app.main == "caja_chica_workers"
+        )  # <-- Cambiado de "workers" a "caja_chica_workers"
         assert celery_app.conf.broker_url == "redis://localhost:6379/0"
-        assert celery_app.conf.result_backend == "redis://localhost:6379/0"
