@@ -2,8 +2,6 @@ import os
 from unittest.mock import AsyncMock, patch, MagicMock
 import pytest
 
-# 1. Inyectamos variables ficticias obligatorias en el entorno ANTES de importar el servicio
-# Esto evita de forma matemática que PydanticSettings lance un ValidationError
 mock_env = {
     "WHATSAPP_VERIFY_TOKEN": "test_token",
     "WHATSAPP_API_TOKEN": "test_api",
@@ -20,9 +18,8 @@ with patch.dict("os.environ", mock_env):
 async def test_transcribir_audio_whisper_exito() -> None:
     """Valida que la función transcribir_audio_whisper lea el archivo local
 
-    y devuelva el texto de forma correcta utilizando el cliente asíncrono mockeado.
+    y devuelva el texto de forma correcta utilizando el cliente asíncrono.
     """
-    # Simulamos que el archivo físico existe en el disco
     with patch("services.openai_service.os.path.exists", return_value=True), patch(
         "services.openai_service.open", create=True
     ) as mock_open:
@@ -30,7 +27,6 @@ async def test_transcribir_audio_whisper_exito() -> None:
         mock_file_instance = MagicMock()
         mock_open.return_value.__enter__.return_value = mock_file_instance
 
-        # Estructura de respuesta simulada de OpenAI Whisper
         mock_transcription_response = MagicMock()
         mock_transcription_response.text = (
             "Mae, gasté 5 rojos en gasolina para el pickup de la empresa"
@@ -46,7 +42,11 @@ async def test_transcribir_audio_whisper_exito() -> None:
                 model="whisper-1",
                 file=mock_file_instance,
                 language="es",
-                prompt="Transcribe esta nota de voz sobre control de dinero, gastos, ingresos y finanzas de una pyme en Costa Rica. Ignora muletillas.",
+                prompt=(
+                    "Transcribe esta nota de voz sobre control de dinero, "
+                    "gastos, ingresos y finanzas de una pyme en Costa Rica. "
+                    "Ignora muletillas."
+                ),
             )
 
 
