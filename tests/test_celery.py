@@ -18,6 +18,7 @@ def test_celery_inicializacion_correcta() -> None:
         "WHATSAPP_VERIFY_TOKEN": "test_token",
         "WHATSAPP_API_TOKEN": "test_api",
         "WHATSAPP_PHONE_NUMBER_ID": "test_id",
+        "OPENAI_API_KEY": "test_openai_key",
         "DATABASE_URL": "postgresql://user:pass@localhost/db",
         "REDIS_URL": "redis://localhost:6379/0",
     }
@@ -26,7 +27,7 @@ def test_celery_inicializacion_correcta() -> None:
         # 3. Importamos el componente diferido dentro del contexto simulado
         from workers.celery_app import celery_app
 
-        # 4. Evaluamos que la configuración cargue de forma impecable
-        assert celery_app.main == "caja_chica_workers"
-        assert celery_app.conf.broker_url.startswith("redis://")
-        assert celery_app.conf.result_backend.startswith("redis://")
+        # 4. Aserciones de control estructural
+        assert celery_app.main == "workers"
+        assert celery_app.conf.broker_url == "redis://localhost:6379/0"
+        assert celery_app.conf.result_backend == "redis://localhost:6379/0"
