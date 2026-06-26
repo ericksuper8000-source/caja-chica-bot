@@ -67,3 +67,80 @@ async def test_parse_financial_text_invalid_input():
 
         resultado = await parse_financial_text(text_input="Hola buenas tardes qué tal")
         assert resultado is None
+
+
+@pytest.mark.anyio
+async def test_extraccion_modismos_ticos_rojos():
+    """Caso 1: Validar el uso de 'rojos' como miles de colones"""
+    mock_transaction_data = {
+        "monto": 3000,
+        "categoria": "Transporte",
+        "tipo_movimiento": "Gasto",
+        "detalle": "pasaje del bus",
+    }
+    mock_response = AsyncMock()
+    mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
+
+    with patch(
+        "services.openai_service.openai_client.beta.chat.completions.parse",
+        new_callable=AsyncMock,
+    ) as mock_parse:
+        mock_parse.return_value = mock_response
+
+        texto_usuario = "Mae, apunte ahí que se me fueron 3 rojos en el pasaje del bus"
+        resultado = await parse_financial_text(text_input=texto_usuario)
+
+        assert resultado["monto"] == 3000
+        assert resultado["tipo_movimiento"].lower() == "gasto"
+        assert "pasaje" in resultado["detalle"].lower()
+
+
+@pytest.mark.anyio
+async def test_extraccion_modismos_ticos_tucan():
+    """Caso 2: Validar el uso de 'tucán' como billete de 10,000 colones"""
+    mock_transaction_data = {
+        "monto": 10000,
+        "categoria": "Ingresos",
+        "tipo_movimiento": "Ingreso",
+        "detalle": "brete que le hice al vecino",
+    }
+    mock_response = AsyncMock()
+    mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
+
+    with patch(
+        "services.openai_service.openai_client.beta.chat.completions.parse",
+        new_callable=AsyncMock,
+    ) as mock_parse:
+        mock_parse.return_value = mock_response
+
+        texto_usuario = "Me entró un tucán por el brete que le hice al vecino"
+        resultado = await parse_financial_text(text_input=texto_usuario)
+
+        assert resultado["monto"] == 10000
+        assert resultado["tipo_movimiento"].lower() == "ingreso"
+        assert "brete" in resultado["detalle"].lower()
+
+
+@pytest.mark.anyio
+async def test_extraccion_modismos_ticos_tejas():
+    """Caso 3: Validar el uso de 'tejas' como cientos de colones"""
+    mock_transaction_data = {
+        "monto": 500,
+        "categoria": "Alimentación",
+        "tipo_movimiento": "Gasto",
+        "detalle": "empanada en la pulpería",
+    }
+    mock_response = AsyncMock()
+    mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
+
+    with patch(
+        "services.openai_service.openai_client.beta.chat.completions.parse",
+        new_callable=AsyncMock,
+    ) as mock_parse:
+        mock_parse.return_value = mock_response
+
+        texto_usuario = "Gasté 5 tejas en una empanada en la pulpería"
+        resultado = await parse_financial_text(text_input=texto_usuario)
+
+        assert resultado["monto"] == 500
+        assert resultado["tipo_movimiento"].lower() == "gasto"

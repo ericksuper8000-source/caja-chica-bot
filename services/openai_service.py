@@ -4,8 +4,10 @@ from pydantic import BaseModel, Field
 from typing import Optional, Literal
 from app.config import settings
 
-# Inicialización unificada del cliente asíncrono para IA
-openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+# Si la llave viene vacía (como en GitHub Actions), usamos un valor ficticio
+# para evitar que la inicialización en frío rompa la recolección de los tests.
+_api_key = settings.OPENAI_API_KEY or "sk-mock-key-for-testing-purposes-only"
+openai_client = AsyncOpenAI(api_key=_api_key)
 
 
 # ==========================================
