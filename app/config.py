@@ -3,34 +3,34 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # Configuración para leer el archivo .env automáticamente
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False,
+        case_sensitive=True,  # Al estar en True, busca exactamente en mayúsculas
     )
 
-    # Variables obligatorias: Le ponemos un default vacío para que Mypy no chille al instanciar,
-    # pero Pydantic exigirá que esté en el .env si dejamos el string vacío o validamos después.
-    openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
-    fastapi_env: str = Field(default="development", validation_alias="FASTAPI_ENV")
+    # Variables obligatorias (con default vacío para complacer a Mypy)
+    OPENAI_API_KEY: str = Field(default="")
+    FASTAPI_ENV: str = Field(default="development")
 
-    # Variables con defaults claros
-    postgres_user: str = Field(default="postgres", validation_alias="POSTGRES_USER")
-    postgres_password: str = Field(
-        default="postgres", validation_alias="POSTGRES_PASSWORD"
-    )
-    postgres_db: str = Field(default="caja_chica", validation_alias="POSTGRES_DB")
-    postgres_host: str = Field(default="localhost", validation_alias="POSTGRES_HOST")
-    postgres_port: int = Field(default=5432, validation_alias="POSTGRES_PORT")
+    # Configuración de Base de Datos (PostgreSQL)
+    POSTGRES_USER: str = Field(default="postgres")
+    POSTGRES_PASSWORD: str = Field(default="postgres")
+    POSTGRES_DB: str = Field(default="caja_chica")
+    POSTGRES_HOST: str = Field(default="localhost")
+    POSTGRES_PORT: int = Field(default=5432)
 
-    redis_url: str = Field(
-        default="redis://localhost:6379/0", validation_alias="REDIS_URL"
-    )
+    # Configuración de Redis / Celery
+    REDIS_URL: str = Field(default="redis://localhost:6379/0")
 
     @property
     def database_url(self) -> str:
         """Genera dinámicamente la URL de conexión para SQLAlchemy/Tortoise."""
-        return f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        return (
+            f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
 
 
 # Instancia global para importar en la app
