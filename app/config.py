@@ -1,34 +1,37 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Administrador centralizado de variables de entorno del proyecto.
-
-    Utiliza Pydantic para validar la presencia y el tipo correcto de cada
-    credencial obligatoria cargada desde el archivo local .env.
-    """
-
-    # Configuración del servidor FastAPI
-    PROJECT_NAME: str = "Caja Chica AI Bot"
-    ENVIRONMENT: str = "development"
-
-    # Credenciales de WhatsApp Cloud API (Meta)
-    WHATSAPP_VERIFY_TOKEN: str
-    WHATSAPP_API_TOKEN: str
-    WHATSAPP_PHONE_NUMBER_ID: str
-
-    # Credenciales de Inteligencia Artificial
-    OPENAI_API_KEY: str
-
-    # Configuración de Infraestructura de Datos y Mensajería
-    DATABASE_URL: str
-    REDIS_URL: str = "redis://redis:6379/0"
-
-    # Configuración interna de Pydantic Settings para apuntar al archivo .env
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
     )
 
+    # Variables obligatorias: Le ponemos un default vacío para que Mypy no chille al instanciar,
+    # pero Pydantic exigirá que esté en el .env si dejamos el string vacío o validamos después.
+    openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
+    fastapi_env: str = Field(default="development", validation_alias="FASTAPI_ENV")
 
-# Instancia global para ser importada en toda la aplicación
-settings = Settings()  # type: ignore[call-arg]
+    # Variables con defaults claros
+    postgres_user: str = Field(default="postgres", validation_alias="POSTGRES_USER")
+    postgres_password: str = Field(
+        default="postgres", validation_alias="POSTGRES_PASSWORD"
+    )
+    postgres_db: str = Field(default="caja_chica", validation_alias="POSTGRES_DB")
+    postgres_host: str = Field(default="localhost", validation_alias="POSTGRES_HOST")
+    postgres_port: int = Field(default=5432, validation_alias="POSTGRES_PORT")
+
+    redis_url: str = Field(
+        default="redis://localhost:6379/0", validation_alias="REDIS_URL"
+    )
+
+    @property
+    def database_url(self) -> str:
+        """Genera dinámicamente la URL de conexión para SQLAlchemy/Tortoise."""
+        return f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+
+
+# Instancia global para importar en la app
+settings = Settings()
