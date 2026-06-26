@@ -1,69 +1,91 @@
-# El Analista Financiero de Caja Chica v√≠a WhatsApp üá®üá∑ü§ñ
+# El Analista Financiero de Caja Chica v®™a WhatsApp ??????
 
-Bot privado de automatizaci√≥n y control financiero dise√±ado para micro-PYMEs en Costa Rica. El sistema permite registrar de forma estructurada ingresos y gastos mediante el procesamiento as√≠ncrono de notas de voz y mensajes de texto enviados por WhatsApp.
+Bot privado de automatizaci®Æn, captura y control financiero dise?ado para micro-PYMEs en Costa Rica.  
+El sistema permite registrar de forma estructurada ingresos y gastos mediante el procesamiento as®™ncrono de notas de voz y mensajes de texto enviados por WhatsApp, traduciendo modismos locales a datos contables exactos.
 
-## üöÄ Arquitectura y Stack Tecnol√≥gico
-
-El proyecto sigue un patr√≥n de microservicios contenerizados y as√≠ncronos para cumplir de forma estricta con las restricciones de tiempo de respuesta de la API de WhatsApp de Meta:
-
-- **Backend API:** Python 3.12 + FastAPI (Manejo de Webhooks de alta velocidad)
-- **Procesamiento As√≠ncrono:** Celery Task Queue
-- **Message Broker & Cache:** Redis
-- **Base de Datos:** PostgreSQL 15+ (Auditor√≠a, logs y data isolation)
-- **APIs de IA:** OpenAI Whisper API (Transcripci√≥n) + GPT-4o-mini (Extracci√≥n Estructurada)
-- **Estrategia de Despliegue:** Contenedores aislados mediante Docker & Docker Compose
-- **Proxy Inverso:** Caddy Server (SSL Autom√°tico)
+Este repositorio refleja un enfoque de ingenier®™a profesional junior:  
+**Spec-Driven Development (SDD)**, **Test-Driven Development (TDD)**, automatizaci®Æn estricta de infraestructura (CI/CD) y aislamiento de datos multitenant.
 
 ---
 
-## üõ†Ô∏è Estado del Proyecto e Infraestructura Local
+## ?? Arquitectura y Decisiones T®¶cnicas Basadas en Datos
 
-El proyecto se encuentra en desarrollo activo de su MVP. Hemos consolidado la infraestructura base y la capa de comunicaci√≥n y seguridad inicial con Meta:
+El sistema sigue un patr®Æn de microservicios contenerizados y as®™ncronos para garantizar alta disponibilidad y cumplir con las restricciones de negocio:
 
-- [x] **Fase 0: Infraestructura Base Local:** Arquitectura de contenedores multi-stage (FastAPI, Worker, Redis, DB), sincronizaci√≥n de repositorios remotos simult√°neos (GitHub/GitLab), pol√≠ticas de ramas (`main` protegida, desarrollo en `develop`) y pipelines de CI (Black, Ruff, Mypy).
-- [x] **Paso 1.1: Handshake con Meta:** Endpoint `GET /v1/whatsapp/webhook` completamente funcional para resolver el desaf√≠o `hub.challenge`.
-- [x] **Paso 1.2: Validaci√≥n de Payload:** Endpoint `POST /v1/whatsapp/webhook` integrado con modelos de validaci√≥n Pydantic (`WebhookPayload`).
-- [x] **Paso 1.3: Escudo Criptogr√°fico:** Verificaci√≥n robusta de firmas HMAC-SHA256 (`X-Hub-Signature-256`) implementada de forma nativa en `app/core/security.py` para bloquear or√≠genes no leg√≠timos.
+- **Backend API:** Python 3.12 + FastAPI. Elegido por su velocidad nativa y validaci®Æn autom®¢tica en tiempo de ejecuci®Æn con Pydantic.
+- **Procesamiento As®™ncrono (Celery + Redis):** **Decisi®Æn Cr®™tica de Ingenier®™a.** Meta exige que el webhook de WhatsApp responda con un HTTP 200 OK en menos de 2 segundos.  
+  Operaciones pesadas como descargar el audio de Meta, transcribirlo con OpenAI Whisper y procesarlo con GPT-4o-mini toman m®¢s de 2 segundos.  
+  Celery delega estas tareas a segundo plano, garantizando respuestas inmediatas a la API de Meta.
+- **Base de Datos:** PostgreSQL 15+ para auditor®™a, persistencia de logs y preparaci®Æn de aislamiento de datos (*Data Isolation*).
+- **APIs de IA:** OpenAI Whisper API para la transcripci®Æn adaptada al contexto tico y GPT-4o-mini utilizando *Structured Outputs* para asegurar que el JSON extra®™do se acople perfectamente a los esquemas de Pydantic sin mutaciones inesperadas.
+- **Proxy Inverso:** Caddy Server para el manejo automatizado y nativo de certificados SSL (HTTPS obligatorio por los requerimientos de seguridad de Meta).
 
 ---
 
-## üíª Inicializaci√≥n del Entorno de Desarrollo
+## ??? Estado del Proyecto y L®™nea de Tiempo (Checklist Ejecutado)
 
-Para levantar el entorno local de forma contenerizada, aseg√∫rese de tener Docker Desktop activo y ejecute:
+El desarrollo se ejecuta bajo una metodolog®™a estrictamente secuencial, donde ninguna feature avanza si la suite de pruebas unitarias no est®¢ en verde.
 
+### ?? Semana 1: Infraestructura y Handshake con Meta (Completado)
+- [x] **Fase 0: Entorno Base:** Arquitectura multi-stage en Docker Compose, sincronizaci®Æn cruzada de pipelines en GitHub/GitLab, pol®™ticas de ramas (`main` protegida, desarrollo en `develop`).
+- [x] **Pasos 1.1 a 1.3: Capa de Seguridad:** Endpoint `GET` para resolver el desaf®™o `hub.challenge` de Meta y endpoint `POST` integrado con esquemas Pydantic.
+- [x] **Escudo Criptogr®¢fico:** Verificaci®Æn de firmas HMAC-SHA256 (`X-Hub-Signature-256`) nativa en `app/core/security.py`.
+
+### ?? Semana 2: Asincron®™a, IA y Suite "Test Tico" (Completado)
+- [x] **Paso 2.1 a 2.3: Orquestaci®Æn As®™ncrona:** Configuraci®Æn de instancias de Celery con Redis e implementaci®Æn de la tarea distribuida `download_audio_task`.
+- [x] **Paso 2.4 y 2.5: Integraci®Æn de IA:** Desarrollo del wrapper as®™ncrono para Whisper y el extractor financiero estructurado con GPT-4o-mini.
+- [x] **Paso 2.6: Suite de Pruebas "Test Tico":** Implementaci®Æn de 18 pruebas unitarias que eval®≤an el parseo correcto de modismos contables costarricenses (Ej: "3 rojos" ? 3000, "un tuc®¢n" ? 5000).
+
+### ?? Pr®Æxima Etapa: Persistencia y Notificaci®Æn de Retorno (En Progreso)
+- [ ] **Fase 3:** Configuraci®Æn de autenticaci®Æn con Google Cloud Platform, inyecci®Æn at®Æmica de datos v®™a `gspread` e integraci®Æn del flujo s®™ncrono de celdas dentro del entorno as®™ncrono.
+
+---
+
+## ?? Calidad de C®Ædigo e Integraci®Æn Continua (CI/CD)
+
+Este repositorio implementa pipelines automatizados id®¶nticos tanto en **GitHub Actions** (`.github/workflows/ci.yml`) como en **GitLab CI/CD** (`.gitlab-ci.yml`).  
+El pipeline act®≤a como un guardrail bloqueante para proteger la rama `main` de regresiones:
+
+1. **Black:** Formateador estricto para estilo homog®¶neo.
+2. **Ruff:** Linter de alto rendimiento para interceptar c®Ædigo muerto y malas pr®¢cticas.
+3. **Mypy (--strict):** Validaci®Æn estricta de Type Hints.
+4. **Pytest (Suite As®™ncrona):** Pruebas unitarias con `pytest-asyncio`.
+
+### ?? Verificaci®Æn Local Preventiva
 ```bash
-# 1. Clonar y acceder al directorio del proyecto
-cd caja-chica-bot
-
-# 2. Inicializar tus secretos locales a partir de la plantilla
-cp .env.example .env
-
-# 3. Levantar los 4 servicios en segundo plano
-docker compose up -d
-
-# 4. Verificar el estado operativo de los contenedores
-docker compose ps
-
-‚öôÔ∏è Integraci√≥n Continua (CI/CD) y Calidad de C√≥digo
-Este proyecto implementa pipelines de automatizaci√≥n id√©nticos tanto en GitHub Actions como en GitLab CI/CD para garantizar la estabilidad, el formato y la consistencia estricta del tipado en cada commit o Pull Request.
-
-El flujo de trabajo ejecuta de manera secuencial las siguientes herramientas de an√°lisis est√°tico:
-
-Black: Formateador estricto para un estilo de c√≥digo homog√©neo.
-
-Ruff: Linter de alto rendimiento para identificar errores y c√≥digo muerto.
-
-Mypy (--strict): Validador de tipado est√°tico obligatorio para mitigar errores en tiempo de ejecuci√≥n.
-
-üß™ Verificaci√≥n Local
-Para asegurar que los pipelines pasen exitosamente antes de hacer un push a develop, se pueden ejecutar los mismos comandos localmente en el entorno virtual o contenedor:
-
-Bash
-# 1. Formatear y verificar estilo
+# Formatear y verificar estilo est®¢tico
 black --check app/ workers/ services/ tests/
 
-# 2. Analizar el c√≥digo con el linter ruff
+# Analizar con el linter ruff
 ruff check app/ workers/ services/ tests/
 
-# 3. Validar el tipado est√°tico estrictamente
+# Validar tipado estricto
 mypy --strict app/
+
+# Correr la suite de pruebas completa
+pytest tests/
+
+
+## ?? Inicializaci®Æn del Entorno de Desarrollo
+
+# 1. Clonar el repositorio
+git clone https://github.com/ericksuper8000-source/caja-chica-bot.git
+cd caja-chica-bot
+
+# 2. Inicializar variables de entorno locales
+cp .env.example .env
+
+# 3. Levantar la infraestructura completa en segundo plano
+docker compose up -d
+
+# 4. Verificar salud operacional de los contenedores
+docker compose ps
+
+
+### ?? Roadmap y Mejoras Futuras (Mentalidad de Escalamiento)
+
+Desacoplamiento de la Inicializaci®Æn Global (Lazy Loading): Migrar el cliente de OpenAI a inicializaci®Æn perezosa o inyecci®Æn de dependencias por funci®Æn.
+
+Aislamiento Multitenant por Base de Datos: Mapear din®¢micamente tenant_id derivado del n®≤mero de WhatsApp para aislar transacciones en PostgreSQL.
+
+Optimizaci®Æn As®™ncrona de I/O en Google Sheets: Encapsular la capa del conector en Thread Pools o migrar hacia un backend as®™ncrono nativo.
