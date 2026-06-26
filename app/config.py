@@ -9,9 +9,10 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,  # Al estar en True, busca exactamente en mayúsculas
+        extra="ignore",  # ¡ESTA ES LA CLAVE! Ignora variables extras del .env sin romper la app
     )
 
-    # Variables estrictamente obligatorias (Sin default para la validación de Pydantic)
+    # Variables estrictamente obligatorias
     OPENAI_API_KEY: str
     FASTAPI_ENV: str = Field(default="development")
 
@@ -27,6 +28,8 @@ class Settings(BaseSettings):
 
     # Variables requeridas por los módulos de WhatsApp y Google Sheets
     WHATSAPP_API_TOKEN: str = Field(default="mock_token")
+    WHATSAPP_VERIFY_TOKEN: str = Field(default="mock_verify")
+    WHATSAPP_PHONE_NUMBER_ID: str = Field(default="mock_id")
     google_sheets_credentials_dict: dict[str, Any] = Field(default_factory=dict)
 
     @property
