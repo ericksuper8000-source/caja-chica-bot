@@ -47,8 +47,8 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        # Instalamos las herramientas de calidad y dependencias base
-        pip install black ruff mypy pytest pydantic pydantic-settings
+        # Instalamos las herramientas de calidad, el plugin asíncrono y dependencias base
+        pip install black ruff mypy pytest pytest-asyncio pydantic pydantic-settings
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Run Black (Formateador)
