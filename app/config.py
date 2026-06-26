@@ -1,3 +1,4 @@
+from typing import Any
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -8,10 +9,11 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,  # Al estar en True, busca exactamente en mayúsculas
+        extra="ignore",  # ¡ESTA ES LA CLAVE! Ignora variables extras del .env sin romper la app
     )
 
-    # Variables obligatorias (con default vacío para complacer a Mypy)
-    OPENAI_API_KEY: str = Field(default="")
+    # Variables estrictamente obligatorias
+    OPENAI_API_KEY: str
     FASTAPI_ENV: str = Field(default="development")
 
     # Configuración de Base de Datos (PostgreSQL)
@@ -24,6 +26,12 @@ class Settings(BaseSettings):
     # Configuración de Redis / Celery
     REDIS_URL: str = Field(default="redis://localhost:6379/0")
 
+    # Variables requeridas por los módulos de WhatsApp y Google Sheets
+    WHATSAPP_API_TOKEN: str = Field(default="mock_token")
+    WHATSAPP_VERIFY_TOKEN: str = Field(default="mock_verify")
+    WHATSAPP_PHONE_NUMBER_ID: str = Field(default="mock_id")
+    google_sheets_credentials_dict: dict[str, Any] = Field(default_factory=dict)
+
     @property
     def database_url(self) -> str:
         """Genera dinámicamente la URL de conexión para SQLAlchemy/Tortoise."""
@@ -33,5 +41,6 @@ class Settings(BaseSettings):
         )
 
 
-# Instancia global para importar en la app
-settings = Settings()
+# Le pasamos un valor ficticio en la instanciación para complacer a Mypy;
+# Pydantic de igual forma cargará el valor real desde el entorno u os.environ.
+settings = Settings(OPENAI_API_KEY="")
