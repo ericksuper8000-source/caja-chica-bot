@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=True,  # Al estar en True, busca exactamente en mayúsculas
-        extra="ignore",  # ¡ESTA ES LA CLAVE! Ignora variables extras del .env sin romper la app
+        case_sensitive=True,  # Busca exactamente en mayúsculas
+        extra="ignore",  # Ignora variables extras del .env sin romper la app
     )
 
     # Variables estrictamente obligatorias
@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     WHATSAPP_API_TOKEN: str = Field(default="mock_token")
     WHATSAPP_VERIFY_TOKEN: str = Field(default="mock_verify")
     WHATSAPP_PHONE_NUMBER_ID: str = Field(default="mock_id")
+    GOOGLE_SHEETS_SPREADSHEET_ID: str = Field(default="mock_spreadsheet_id")
     google_sheets_credentials_dict: dict[str, Any] = Field(default_factory=dict)
 
     @property
@@ -41,6 +42,5 @@ class Settings(BaseSettings):
         )
 
 
-# Le pasamos un valor ficticio en la instanciación para complacer a Mypy;
-# Pydantic de igual forma cargará el valor real desde el entorno u os.environ.
+# Instanciación compatible con Mypy
 settings = Settings(OPENAI_API_KEY="")
