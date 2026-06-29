@@ -1,21 +1,22 @@
-import pytest
 import os
 import sys
 from unittest.mock import patch
-from pydantic import ValidationError
+from app.config import Settings
 
 
-def test_config_falla_si_faltan_variables_obligatorias() -> None:
-    """Valida que Pydantic Settings lance un ValidationError si las
-    credenciales críticas del sistema no se encuentran en el entorno.
+def test_config_valores_por_defecto_en_entorno_vacio() -> None:
+    """Valida que Pydantic Settings asigne correctamente los marcadores de posición
+    por defecto si las variables críticas no se encuentran en el entorno,
+    evitando caídas catastróficas en linters y entornos de CI.
     """
-    from app.config import Settings
-
     if "app.config" in sys.modules:
         del sys.modules["app.config"]
 
-    # Forzamos la limpieza absoluta del entorno del sistema
+    # Forzamos un entorno completamente limpio de variables de sistema
     with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValidationError):
-            # Forzamos a Pydantic a ignorar el archivo físico del disco local
-            Settings(_env_file=None)
+        settings_test = Settings()
+
+        # Validamos que se usen las cadenas vacías de resguardo
+        assert settings_test.WHATSAPP_API_TOKEN == ""
+        assert settings_test.WHATSAPP_VERIFY_TOKEN == ""
+        assert settings_test.OPENAI_API_KEY == ""
