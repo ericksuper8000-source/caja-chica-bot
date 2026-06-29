@@ -4,5 +4,10 @@ celery==5.4.0
 redis==5.0.4
 pydantic-settings==2.3.1
 openai>=1.0.0
-google-auth==2.29.0
-google-api-python-client==2.125.0
+
+# Google Sheets Integration (Fase 3)
+gspread==6.1.2
+
+# Testing Dependencies (Solo Desarrollo Local)
+pytest==8.2.2
+pytest-asyncio==0.23.7
