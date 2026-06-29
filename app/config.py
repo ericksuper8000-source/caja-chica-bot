@@ -1,10 +1,9 @@
-from typing import Any
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # Configuración para leer el archivo .env automáticamente
+    # Configuración estricta para leer el archivo .env automáticamente (Pydantic v2)
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -12,35 +11,32 @@ class Settings(BaseSettings):
         extra="ignore",  # Ignora variables extras del .env sin romper la app
     )
 
-    # Variables estrictamente obligatorias
-    OPENAI_API_KEY: str
-    FASTAPI_ENV: str = Field(default="development")
+    # Variables de Entorno Generales
+    PROJECT_NAME: str = "Caja Chica AI Bot"
+    ENVIRONMENT: str = Field(default="local")
 
-    # Configuración de Base de Datos (PostgreSQL)
-    POSTGRES_USER: str = Field(default="postgres")
-    POSTGRES_PASSWORD: str = Field(default="postgres")
-    POSTGRES_DB: str = Field(default="caja_chica")
-    POSTGRES_HOST: str = Field(default="localhost")
-    POSTGRES_PORT: int = Field(default=5432)
+    # Meta/WhatsApp API (Campos con defaults vacíos para entornos de CI/CD y Mypy)
+    WHATSAPP_API_TOKEN: str = Field(default="")
+    WHATSAPP_VERIFY_TOKEN: str = Field(default="")
+    WHATSAPP_PHONE_NUMBER_ID: str = Field(default="")
 
-    # Configuración de Redis / Celery
+    # OpenAI API
+    OPENAI_API_KEY: str = Field(default="")
+
+    # Celery & Redis
     REDIS_URL: str = Field(default="redis://localhost:6379/0")
 
-    # Variables requeridas por los módulos de WhatsApp y Google Sheets
-    WHATSAPP_API_TOKEN: str = Field(default="mock_token")
-    WHATSAPP_VERIFY_TOKEN: str = Field(default="mock_verify")
-    WHATSAPP_PHONE_NUMBER_ID: str = Field(default="mock_id")
-    GOOGLE_SHEETS_SPREADSHEET_ID: str = Field(default="mock_spreadsheet_id")
-    google_sheets_credentials_dict: dict[str, Any] = Field(default_factory=dict)
+    # Base de Datos Unificada
+    DATABASE_URL: str = Field(default="postgresql://user:pass@localhost/db")
 
-    @property
-    def database_url(self) -> str:
-        """Genera dinámicamente la URL de conexión para SQLAlchemy/Tortoise."""
-        return (
-            f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
-            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-        )
+    # ==========================================
+    # Google Sheets (Fase 3 - Integración Física)
+    # ==========================================
+    GOOGLE_SHEETS_SPREADSHEET_ID: str = Field(default="")
+    GOOGLE_APPLICATION_CREDENTIALS: str = Field(default="")
 
 
-# Instanciación compatible con Mypy
-settings = Settings(OPENAI_API_KEY="")
+# Instanciación limpia y directa. Mypy --strict no chillará porque todos los campos
+# tienen ahora un valor por defecto asignado mediante Field(), permitiendo que Pydantic
+# los sobreescriba fluidamente en producción a partir del entorno real.
+settings = Settings()
