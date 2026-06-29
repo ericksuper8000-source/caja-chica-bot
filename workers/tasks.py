@@ -19,7 +19,7 @@ def download_audio_task(media_id: str) -> str:
     """
     headers = {"Authorization": f"Bearer {settings.WHATSAPP_API_TOKEN}"}
     file_path = f"/tmp/caja_chica/{media_id}.ogg"
-    
+
     try:
         # ---------------------------------------------------------------------
         # PASO A: Descarga del binario de Meta
@@ -41,7 +41,7 @@ def download_audio_task(media_id: str) -> str:
         os.makedirs("/tmp/caja_chica", exist_ok=True)
         with open(file_path, "wb") as f:
             f.write(audio_content)
-        
+
         logger.info(f"Audio descargado con éxito en: {file_path}")
 
         # ---------------------------------------------------------------------
@@ -62,7 +62,7 @@ def download_audio_task(media_id: str) -> str:
             logger.info("Integración E2E completada: Fila registrada en Google Sheets.")
         else:
             logger.error("Fallo la persistencia en el flujo de Celery.")
-            
+
         return file_path
 
     except Exception as e:
