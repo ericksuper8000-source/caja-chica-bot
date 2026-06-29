@@ -36,6 +36,6 @@ class Settings(BaseSettings):
     GOOGLE_APPLICATION_CREDENTIALS: str
 
 
-# Instanciación limpia. Pydantic v2 cargará automáticamente los valores desde el .env.
-# Pasamos valores vacíos por defecto solo si no se encuentran en el entorno (útil para inicializar Mypy)
-settings = Settings()
+# Instanciación limpia con bypass estricto para Mypy (--strict)
+# type: ignore[call-arg] indica a Mypy que la resolución de variables se maneja dinámicamente
+settings = Settings()  # type: ignore[call-arg]
