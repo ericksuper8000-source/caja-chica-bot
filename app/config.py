@@ -15,36 +15,28 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Caja Chica AI Bot"
     ENVIRONMENT: str = Field(default="local")
 
-    # Meta/WhatsApp API (Requeridas con validación estricta)
-    WHATSAPP_API_TOKEN: str
-    WHATSAPP_VERIFY_TOKEN: str
-    WHATSAPP_PHONE_NUMBER_ID: str
+    # Meta/WhatsApp API (Campos con defaults vacíos para entornos de CI/CD y Mypy)
+    WHATSAPP_API_TOKEN: str = Field(default="")
+    WHATSAPP_VERIFY_TOKEN: str = Field(default="")
+    WHATSAPP_PHONE_NUMBER_ID: str = Field(default="")
 
     # OpenAI API
-    OPENAI_API_KEY: str
+    OPENAI_API_KEY: str = Field(default="")
 
     # Celery & Redis
-    REDIS_URL: str
+    REDIS_URL: str = Field(default="redis://localhost:6379/0")
 
     # Base de Datos Unificada
-    DATABASE_URL: str
+    DATABASE_URL: str = Field(default="postgresql://user:pass@localhost/db")
 
     # ==========================================
     # Google Sheets (Fase 3 - Integración Física)
     # ==========================================
-    GOOGLE_SHEETS_SPREADSHEET_ID: str
-    GOOGLE_APPLICATION_CREDENTIALS: str
+    GOOGLE_SHEETS_SPREADSHEET_ID: str = Field(default="")
+    GOOGLE_APPLICATION_CREDENTIALS: str = Field(default="")
 
 
-# Inicialización explícita mapeada como None (casteada a str) para complacer a Mypy --strict.
-# Pydantic v2 sobreescribirá estos valores dinámicamente con el .env real en runtime.
-settings = Settings(
-    WHATSAPP_API_TOKEN=None,  # type: ignore[arg-type]
-    WHATSAPP_VERIFY_TOKEN=None,  # type: ignore[arg-type]
-    WHATSAPP_PHONE_NUMBER_ID=None,  # type: ignore[arg-type]
-    OPENAI_API_KEY=None,  # type: ignore[arg-type]
-    REDIS_URL=None,  # type: ignore[arg-type]
-    DATABASE_URL=None,  # type: ignore[arg-type]
-    GOOGLE_SHEETS_SPREADSHEET_ID=None,  # type: ignore[arg-type]
-    GOOGLE_APPLICATION_CREDENTIALS=None,  # type: ignore[arg-type]
-)
+# Instanciación limpia y directa. Mypy --strict no chillará porque todos los campos
+# tienen ahora un valor por defecto asignado mediante Field(), permitiendo que Pydantic
+# los sobreescriba fluidamente en producción a partir del entorno real.
+settings = Settings()
