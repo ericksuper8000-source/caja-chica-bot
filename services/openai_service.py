@@ -1,7 +1,7 @@
 import os
+from typing import Any, Optional, Literal
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
-from typing import Optional, Literal
 from app.config import settings
 
 # Si la llave viene vacía (como en GitHub Actions), usamos un valor ficticio
@@ -50,7 +50,7 @@ async def transcribir_audio_whisper(file_path: str) -> Optional[str]:
 # ==========================================
 # 3. SERVICIO DE EXTRACCIÓN ESTRUCTURADA
 # ==========================================
-async def parse_financial_text(text_input: str) -> Optional[dict]:
+async def parse_financial_text(text_input: str) -> Optional[dict[str, Any]]:
     """
     Procesa texto con GPT-4o-mini y Structured Outputs.
     """
@@ -89,7 +89,11 @@ async def parse_financial_text(text_input: str) -> Optional[dict]:
 # ==========================================
 # 4. FUNCIÓN PUENTE (ORQUESTADOR DE IA)
 # ==========================================
-async def procesar_audio_a_transaccion(file_path: str) -> Optional[dict]:
+async def procesar_audio_a_transaccion(file_path: str) -> Optional[dict[str, Any]]:
     """
     Orquestador de IA: Transcribe el audio y extrae los datos financieros.
     """
+    text = await transcribir_audio_whisper(file_path)
+    if not text:
+        return None
+    return await parse_financial_text(text)
