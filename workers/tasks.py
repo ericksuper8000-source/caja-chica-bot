@@ -5,72 +5,63 @@ import asyncio
 from workers.celery_app import celery_app
 from app.config import settings
 from services.sheets_service import append_transaction_to_sheet
+from services.openai_service import procesar_audio_a_transaccion
+from services.whatsapp_service import enviar_mensaje_whatsapp
 
 logger = logging.getLogger(__name__)
 
-
-@celery_app.task(name="workers.tasks.download_audio_task")
-def download_audio_task(media_id: str) -> str:
+async def run_pipeline(media_id: str, user_phone: str):
     """
-    Pipeline Orquestador:
-    1. Descarga el audio desde los servidores de Meta.
-    2. [Fase 4 - Pendiente] Procesa con OpenAI Whisper y Chat API.
-    3. Persiste de forma segura en Google Sheets conectando el puente asíncrono.
+    Pipeline completo: Descarga, IA, Sheets y Notificación.
     """
     headers = {"Authorization": f"Bearer {settings.WHATSAPP_API_TOKEN}"}
     file_path = f"/tmp/caja_chica/{media_id}.ogg"
-
+    
     try:
-        # ---------------------------------------------------------------------
-        # PASO A: Descarga del binario de Meta
-        # ---------------------------------------------------------------------
-        with httpx.Client() as client:
+        # A) Descarga
+        async with httpx.AsyncClient() as client:
             meta_url = f"https://graph.facebook.com/v18.0/{media_id}"
-            response = client.get(meta_url, headers=headers)
+            response = await client.get(meta_url, headers=headers)
             response.raise_for_status()
             media_data = response.json()
-
+            
             download_url = media_data.get("url")
-            if not download_url:
-                raise ValueError(f"No se encontró la URL para el media_id: {media_id}")
-
-            audio_response = client.get(download_url, headers=headers)
-            audio_response.raise_for_status()
+            audio_response = await client.get(download_url, headers=headers)
             audio_content = audio_response.content
 
         os.makedirs("/tmp/caja_chica", exist_ok=True)
         with open(file_path, "wb") as f:
             f.write(audio_content)
 
-        logger.info(f"Audio descargado con éxito en: {file_path}")
+        # B) Procesamiento IA
+        parsed_data = await procesar_audio_a_transaccion(file_path)
+        
+        if not parsed_data:
+            await enviar_mensaje_whatsapp(user_phone, "No pude entender el audio, ¿podrías repetirlo?")
+            return "Error: IA no pudo procesar la entrada."
 
-        # ---------------------------------------------------------------------
-        # PASO B: Mock del Parser de OpenAI (Estructura de la Fase 4)
-        # ---------------------------------------------------------------------
-        fake_parsed_transaction = {
-            "monto": 3500,
-            "categoria": "Servicios",
-            "tipo_movimiento": "Gasto",
-            "detalle": "Prueba de Integración End-to-End Celery-Sheets",
-        }
+        # C) Persistencia
+        await append_transaction_to_sheet(parsed_data)
 
-        # ---------------------------------------------------------------------
-        # PASO C: Persistencia Asíncrona en Google Sheets vía Puente asyncio
-        # ---------------------------------------------------------------------
-        success = asyncio.run(append_transaction_to_sheet(fake_parsed_transaction))
-        if success:
-            logger.info("Integración E2E completada: Fila registrada en Google Sheets.")
-        else:
-            logger.error("Fallo la persistencia en el flujo de Celery.")
-
-        return file_path
+        # D) Notificación al usuario
+        mensaje_confirmacion = (
+            f"✅ ¡Entendido, jefe! Registré: {parsed_data.get('detalle', 'Gasto')} "
+            f"por ₡{parsed_data.get('monto', 0)} en {parsed_data.get('categoria', 'Varios')}."
+        )
+        await enviar_mensaje_whatsapp(user_phone, mensaje_confirmacion)
+        
+        return "Pipeline ejecutado con éxito"
 
     except Exception as e:
-        logger.error(f"Error crítico en el pipeline de la tarea: {e}")
-        raise e
-
+        logger.error(f"Error crítico en el pipeline: {e}")
+        return f"Error: {str(e)}"
     finally:
-        # Limpieza obligatoria del archivo temporal para evitar fugas de almacenamiento
         if os.path.exists(file_path):
             os.remove(file_path)
-            logger.info(f"Archivo temporal eliminado de forma segura: {file_path}")
+
+@celery_app.task(name="workers.tasks.download_audio_task")
+def download_audio_task(media_id: str, user_phone: str):
+    """
+    Tarea de Celery que inicia el pipeline asíncrono.
+    """
+    return asyncio.run(run_pipeline(media_id, user_phone))
