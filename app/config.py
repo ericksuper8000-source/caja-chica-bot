@@ -33,5 +33,6 @@ class Settings(BaseSettings):
     GOOGLE_SHEETS_SPREADSHEET_ID: str = Field(default="")
     GOOGLE_APPLICATION_CREDENTIALS: str = Field(default="")
 
+
 # Esta instancia es la que usará tu aplicación.
 settings = Settings()

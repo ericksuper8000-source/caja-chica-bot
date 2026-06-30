@@ -1,6 +1,7 @@
 import sys
 from unittest.mock import MagicMock, patch
 
+
 def test_download_audio_task_exito() -> None:
     """Valida el flujo exitoso de la tarea asíncrona."""
     if "app.config" in sys.modules:
@@ -21,22 +22,34 @@ def test_download_audio_task_exito() -> None:
         from workers.tasks import download_audio_task
 
         # Ajustamos los mocks para la nueva lógica (incluyendo asincronía)
-        with patch("workers.tasks.httpx.AsyncClient") as mock_client_class, \
-             patch("workers.tasks.os.makedirs") as mock_makedirs, \
-             patch("workers.tasks.open", create=True) as mock_open, \
-             patch("workers.tasks.procesar_audio_a_transaccion") as mock_ia, \
-             patch("workers.tasks.append_transaction_to_sheet") as mock_sheet, \
-             patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp:
+        with patch("workers.tasks.httpx.AsyncClient") as mock_client_class, patch(
+            "workers.tasks.os.makedirs"
+        ) as mock_makedirs, patch(
+            "workers.tasks.open", create=True
+        ) as mock_open, patch(
+            "workers.tasks.procesar_audio_a_transaccion"
+        ) as mock_ia, patch(
+            "workers.tasks.append_transaction_to_sheet"
+        ) as mock_sheet, patch(
+            "workers.tasks.enviar_mensaje_whatsapp"
+        ) as mock_whatsapp:
 
-            mock_client_instance = mock_client_class.return_value.__aenter__.return_value
-            
+            mock_client_instance = (
+                mock_client_class.return_value.__aenter__.return_value
+            )
+
             mock_response_meta = MagicMock()
-            mock_response_meta.json.return_value = {"url": "https://cdn.facebook.com/m/audio.ogg"}
-            
+            mock_response_meta.json.return_value = {
+                "url": "https://cdn.facebook.com/m/audio.ogg"
+            }
+
             mock_response_audio = MagicMock()
             mock_response_audio.content = b"fake_ogg_bytes"
 
-            mock_client_instance.get.side_effect = [mock_response_meta, mock_response_audio]
+            mock_client_instance.get.side_effect = [
+                mock_response_meta,
+                mock_response_audio,
+            ]
 
             # AHORA ENVIAMOS LOS 2 ARGUMENTOS
             result = download_audio_task("12345", "50600000000")
