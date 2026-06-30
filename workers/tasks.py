@@ -10,13 +10,14 @@ from services.whatsapp_service import enviar_mensaje_whatsapp
 
 logger = logging.getLogger(__name__)
 
+
 async def run_pipeline(media_id: str, user_phone: str):
     """
     Pipeline completo: Descarga, IA, Sheets y Notificación.
     """
     headers = {"Authorization": f"Bearer {settings.WHATSAPP_API_TOKEN}"}
     file_path = f"/tmp/caja_chica/{media_id}.ogg"
-    
+
     try:
         # A) Descarga
         async with httpx.AsyncClient() as client:
@@ -24,7 +25,7 @@ async def run_pipeline(media_id: str, user_phone: str):
             response = await client.get(meta_url, headers=headers)
             response.raise_for_status()
             media_data = response.json()
-            
+
             download_url = media_data.get("url")
             audio_response = await client.get(download_url, headers=headers)
             audio_content = audio_response.content
@@ -35,9 +36,11 @@ async def run_pipeline(media_id: str, user_phone: str):
 
         # B) Procesamiento IA
         parsed_data = await procesar_audio_a_transaccion(file_path)
-        
+
         if not parsed_data:
-            await enviar_mensaje_whatsapp(user_phone, "No pude entender el audio, ¿podrías repetirlo?")
+            await enviar_mensaje_whatsapp(
+                user_phone, "No pude entender el audio, ¿podrías repetirlo?"
+            )
             return "Error: IA no pudo procesar la entrada."
 
         # C) Persistencia
@@ -49,7 +52,7 @@ async def run_pipeline(media_id: str, user_phone: str):
             f"por ₡{parsed_data.get('monto', 0)} en {parsed_data.get('categoria', 'Varios')}."
         )
         await enviar_mensaje_whatsapp(user_phone, mensaje_confirmacion)
-        
+
         return "Pipeline ejecutado con éxito"
 
     except Exception as e:
@@ -58,6 +61,7 @@ async def run_pipeline(media_id: str, user_phone: str):
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
+
 
 @celery_app.task(name="workers.tasks.download_audio_task")
 def download_audio_task(media_id: str, user_phone: str):

@@ -63,11 +63,13 @@ def test_recibir_mensaje_webhook_exitoso() -> None:
                         "value": {
                             "messaging_product": "whatsapp",
                             "metadata": {"phone_number_id": "12345"},
-                            "messages": [{
-                                "from": "50688889999",
-                                "type": "audio",
-                                "audio": {"id": "audio_123"}
-                            }]
+                            "messages": [
+                                {
+                                    "from": "50688889999",
+                                    "type": "audio",
+                                    "audio": {"id": "audio_123"},
+                                }
+                            ],
                         },
                         "field": "messages",
                     }
@@ -83,9 +85,7 @@ def test_recibir_mensaje_webhook_exitoso() -> None:
     assert end_time - start_time < 2.0
     assert response.status_code == 200
     # Ajustado para coincidir exactamente con la respuesta de tu API
-    assert response.json() == {
-        "status": "procesando_audio"
-    }
+    assert response.json() == {"status": "procesando_audio"}
 
 
 def test_recibir_mensaje_webhook_payload_invalido() -> None:
