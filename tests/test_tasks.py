@@ -21,7 +21,7 @@ def test_download_audio_task_exito() -> None:
     with patch.dict("os.environ", mock_env, clear=True):
         from workers.tasks import download_audio_task
 
-        # Ajustamos los mocks para la nueva lógica (incluyendo asincronía)
+        # Usamos '_' para los mocks que no se referencian explícitamente en el cuerpo del test
         with patch("workers.tasks.httpx.AsyncClient") as mock_client_class, patch(
             "workers.tasks.os.makedirs"
         ) as mock_makedirs, patch(
@@ -30,9 +30,9 @@ def test_download_audio_task_exito() -> None:
             "workers.tasks.procesar_audio_a_transaccion"
         ) as mock_ia, patch(
             "workers.tasks.append_transaction_to_sheet"
-        ) as mock_sheet, patch(
+        ) as _, patch(
             "workers.tasks.enviar_mensaje_whatsapp"
-        ) as mock_whatsapp:
+        ) as _:
 
             mock_client_instance = (
                 mock_client_class.return_value.__aenter__.return_value
@@ -51,7 +51,6 @@ def test_download_audio_task_exito() -> None:
                 mock_response_audio,
             ]
 
-            # AHORA ENVIAMOS LOS 2 ARGUMENTOS
             result = download_audio_task("12345", "50600000000")
 
             assert result == "Pipeline ejecutado con éxito"
