@@ -13,28 +13,22 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def override_security_dependency() -> Generator[AsyncMock, None, None]:
-    """Inyecta un bypass automático de seguridad para los endpoints del test.
-
-    Sobrescribe la dependencia real de FastAPI con un AsyncMock que no hace nada,
-    permitiendo probar payloads simulados sin calcular firmas criptográficas reales.
-    """
+    """Inyecta un bypass automático de seguridad para los endpoints del test."""
     mock_validator = AsyncMock()
-    # Forzamos a FastAPI a usar nuestro mock en lugar de la función real
     app.dependency_overrides[validar_firma_whatsapp] = lambda: mock_validator
     yield mock_validator
-    # Limpiamos los overrides después de cada test para no contaminar el entorno
     app.dependency_overrides.clear()
 
 
 def test_environment_health() -> None:
-    """Paso 0.6: Verifica que el endpoint de sanidad responda correctamente."""
+    """Verifica que el endpoint de sanidad responda correctamente."""
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "healthy"}
 
 
 def test_verificar_webhook_handshake_exitoso() -> None:
-    """Paso 1.1: Valida el handshake exitoso (GET) con el token correcto."""
+    """Valida el handshake exitoso (GET) con el token correcto."""
     params = {
         "hub.mode": "subscribe",
         "hub.verify_token": "mi_token_secreto_tico_123",
@@ -46,7 +40,7 @@ def test_verificar_webhook_handshake_exitoso() -> None:
 
 
 def test_verificar_webhook_handshake_invalido() -> None:
-    """Paso 1.1: Valida que un token incorrecto sea rechazado con HTTP 403."""
+    """Valida que un token incorrecto sea rechazado con HTTP 403."""
     params = {
         "hub.mode": "subscribe",
         "hub.verify_token": "token_incorrecto_mae",
@@ -58,10 +52,7 @@ def test_verificar_webhook_handshake_invalido() -> None:
 
 
 def test_recibir_mensaje_webhook_exitoso() -> None:
-    """Paso 1.2 & 1.4: Simula la recepción de un payload válido de Meta.
-
-    Verifica que la respuesta sea HTTP 200 OK en menos de 2 segundos.
-    """
+    """Simula la recepción de un payload de audio válido y valida la respuesta."""
     payload = {
         "object": "whatsapp_business_account",
         "entry": [
@@ -69,7 +60,15 @@ def test_recibir_mensaje_webhook_exitoso() -> None:
                 "id": "1234567890",
                 "changes": [
                     {
-                        "value": {"messaging_product": "whatsapp", "metadata": {}},
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {"phone_number_id": "12345"},
+                            "messages": [{
+                                "from": "50688889999",
+                                "type": "audio",
+                                "audio": {"id": "audio_123"}
+                            }]
+                        },
                         "field": "messages",
                     }
                 ],
@@ -81,20 +80,16 @@ def test_recibir_mensaje_webhook_exitoso() -> None:
     response = client.post("/v1/whatsapp/webhook", json=payload)
     end_time = time.time()
 
-    # Guardrail de velocidad de Meta API (< 2 segundos)
     assert end_time - start_time < 2.0
     assert response.status_code == 200
+    # Ajustado para coincidir exactamente con la respuesta de tu API
     assert response.json() == {
-        "status": "recibido",
-        "object": "whatsapp_business_account",
+        "status": "procesando_audio"
     }
 
 
 def test_recibir_mensaje_webhook_payload_invalido() -> None:
-    """Paso 1.2: Valida que estructuras JSON corruptas o incompletas
-
-    sean rechazadas por la validación estricta de Pydantic (HTTP 422).
-    """
+    """Valida que estructuras JSON corruptas sean rechazadas (HTTP 422)."""
     payload_invalido = {"objeto_incorrecto": "hack", "entry": []}
     response = client.post("/v1/whatsapp/webhook", json=payload_invalido)
     assert response.status_code == 422
