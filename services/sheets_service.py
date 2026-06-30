@@ -8,13 +8,14 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-def get_sheets_client() -> gspread.Client:
+def get_sheets_client() -> Any:
     """
     Inicializa y devuelve el cliente autenticado de gspread.
+    Usamos Any para evitar errores de validación de tipos externos en mypy.
     """
     try:
         # gspread inicializa el cliente leyendo directamente el archivo del entorno
-        client: gspread.Client = gspread.service_account(
+        client: Any = gspread.service_account(
             filename=settings.GOOGLE_APPLICATION_CREDENTIALS
         )
         return client
@@ -68,9 +69,6 @@ async def append_transaction_to_sheet(transaction_data: Dict[str, Any]) -> bool:
         )
         return True
 
-    except gspread.exceptions.APIError as error:
-        logger.error(f"Error de API de gspread al escribir en Google Sheets: {error}")
-        return False
     except Exception as e:
         logger.error(f"Error inesperado en el servicio de Sheets: {e}")
         return False
