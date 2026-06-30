@@ -71,4 +71,5 @@ def download_audio_task(media_id: str, user_phone: str) -> str:
     """
     Tarea de Celery que inicia el pipeline asíncrono.
     """
-    return asyncio.run(run_pipeline(media_id, user_phone))
+    result: str = asyncio.run(run_pipeline(media_id, user_phone))
+    return result

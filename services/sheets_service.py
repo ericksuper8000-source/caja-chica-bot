@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, List
-import gspread  # type: ignore
+import gspread
 from app.config import settings
 
 logger = logging.getLogger(__name__)
