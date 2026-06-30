@@ -66,7 +66,6 @@ async def run_pipeline(media_id: str, user_phone: str) -> str:
             os.remove(file_path)
 
 
-# type: ignore[misc]
 @celery_app.task(name="workers.tasks.download_audio_task")
 def download_audio_task(media_id: str, user_phone: str) -> str:
     """

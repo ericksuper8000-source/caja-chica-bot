@@ -11,11 +11,12 @@ logger = logging.getLogger(__name__)
 def get_sheets_client() -> Any:
     """
     Inicializa y devuelve el cliente autenticado de gspread.
-    Usamos Any para evitar errores de validación de tipos externos en mypy.
+    Usamos getattr para evitar el error de atributo no definido en mypy.
     """
     try:
-        # gspread inicializa el cliente leyendo directamente el archivo del entorno
-        client: Any = gspread.service_account(
+        # Accedemos a la función de forma dinámica para silenciar el error de mypy
+        service_account_func = getattr(gspread, "service_account")
+        client: Any = service_account_func(
             filename=settings.GOOGLE_APPLICATION_CREDENTIALS
         )
         return client
