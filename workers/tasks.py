@@ -36,7 +36,9 @@ async def run_pipeline(media_id: str, user_phone: str) -> str:
             f.write(audio_content)
 
         # B) Procesamiento IA
-        parsed_data: dict[str, Any] | None = await procesar_audio_a_transaccion(file_path)
+        parsed_data: dict[str, Any] | None = await procesar_audio_a_transaccion(
+            file_path
+        )
 
         if not parsed_data:
             await enviar_mensaje_whatsapp(
