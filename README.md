@@ -1,4 +1,4 @@
-# El Analista Financiero de Caja Chica via WhatsApp ???? ??
+# El Analista Financiero de Caja Chica via WhatsApp xxx
 
 Bot privado de automatizacion, captura y control financiero disenado para micro-PYMEs en Costa Rica. El sistema permite registrar de forma estructurada ingresos y gastos mediante el procesamiento asincrono de notas de voz y mensajes de texto enviados por WhatsApp, traduciendo modismos locales ("rojos", "tucanes", "tejas") a datos contables exactos y persistiendo la informacion de forma inmediata.
 
