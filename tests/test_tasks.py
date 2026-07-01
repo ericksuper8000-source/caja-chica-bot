@@ -3,7 +3,10 @@ from unittest.mock import MagicMock, patch
 
 
 def test_download_audio_task_exito() -> None:
-    """Valida el flujo exitoso de la tarea asíncrona."""
+    """Valida el flujo exitoso de la tarea asíncrona simulando las
+
+    respuestas HTTP de Meta utilizando httpx.
+    """
     if "app.config" in sys.modules:
         del sys.modules["app.config"]
     if "workers.tasks" in sys.modules:
@@ -21,22 +24,12 @@ def test_download_audio_task_exito() -> None:
     with patch.dict("os.environ", mock_env, clear=True):
         from workers.tasks import download_audio_task
 
-        # Usamos '_' para los mocks que no se referencian explícitamente en el cuerpo del test
-        with patch("workers.tasks.httpx.AsyncClient") as mock_client_class, patch(
+        with patch("workers.tasks.httpx.Client") as mock_client_class, patch(
             "workers.tasks.os.makedirs"
-        ) as mock_makedirs, patch(
-            "workers.tasks.open", create=True
-        ) as mock_open, patch(
-            "workers.tasks.procesar_audio_a_transaccion"
-        ) as mock_ia, patch(
-            "workers.tasks.append_transaction_to_sheet"
-        ) as _, patch(
-            "workers.tasks.enviar_mensaje_whatsapp"
-        ) as _:
+        ) as mock_makedirs, patch("workers.tasks.open", create=True) as mock_open:
 
-            mock_client_instance = (
-                mock_client_class.return_value.__aenter__.return_value
-            )
+            mock_client_instance = MagicMock()
+            mock_client_class.return_value.__enter__.return_value = mock_client_instance
 
             mock_response_meta = MagicMock()
             mock_response_meta.json.return_value = {
@@ -51,10 +44,9 @@ def test_download_audio_task_exito() -> None:
                 mock_response_audio,
             ]
 
-            result = download_audio_task("12345", "50600000000")
+            result_path = download_audio_task("12345")
 
-            assert result == "Pipeline ejecutado con éxito"
+            assert result_path == "/tmp/caja_chica/12345.ogg"
             assert mock_client_instance.get.call_count == 2
             mock_makedirs.assert_called_once_with("/tmp/caja_chica", exist_ok=True)
             mock_open.assert_called_once_with("/tmp/caja_chica/12345.ogg", "wb")
-            assert mock_ia.called is True

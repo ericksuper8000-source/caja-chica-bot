@@ -1,7 +1,7 @@
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock
 
-# Guardrail estricto: Mockeamos el entorno
+# Guardrail estricto: Mockeamos el entorno antes de importar la configuración de la app
 with patch.dict(
     "os.environ",
     {
@@ -15,45 +15,52 @@ with patch.dict(
     from services.openai_service import parse_financial_text
 
 
-def create_mock_parsed_response(data: dict) -> MagicMock:
-    """Helper para simular un objeto Pydantic que responde a .model_dump()"""
-    mock_obj = MagicMock()
-    mock_obj.model_dump.return_value = data
-    return mock_obj
-
-
 @pytest.mark.anyio
 async def test_parse_financial_text_success():
-    data = {
+    """
+    Valida que el servicio de OpenAI extraiga correctamente las entidades estructuradas
+    utilizando modismos ticos y devolviendo el modelo tipado esperado.
+    """
+    # 1. Definimos el mock de la respuesta estructurada de OpenAI
+    mock_transaction_data = {
         "monto": 5000,
         "categoria": "Transporte",
         "tipo_movimiento": "Gasto",
         "detalle": "Pasajes de autobús",
     }
-    mock_response = AsyncMock()
-    mock_response.choices = [
-        AsyncMock(message=AsyncMock(parsed=create_mock_parsed_response(data)))
-    ]
 
+    # 2. Simulamos el comportamiento asíncrono del cliente de OpenAI
+    mock_response = AsyncMock()
+    mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
+
+    # 3. Ejecutamos la prueba interceptando la llamada real a OpenAI
     with patch(
         "services.openai_service.openai_client.beta.chat.completions.parse",
         new_callable=AsyncMock,
     ) as mock_parse:
         mock_parse.return_value = mock_response
-        resultado = await parse_financial_text(
-            text_input="Mae, registrá 5 rojos de pasajes porfa"
-        )
 
+        texto_usuario = "Mae, registrá 5 rojos de pasajes porfa"
+        resultado = await parse_financial_text(text_input=texto_usuario)
+
+        # 4. Aserciones estrictas de negocio (Costa Rica)
         assert resultado["monto"] == 5000
+        assert resultado["categoria"] == "Transporte"
+        assert resultado["tipo_movimiento"] == "Gasto"
         assert mock_parse.called
 
 
 @pytest.mark.anyio
 async def test_parse_financial_text_invalid_input():
+    """
+    Valida el comportamiento del sistema cuando el texto no contiene
+    información financiera útil.
+    """
     with patch(
         "services.openai_service.openai_client.beta.chat.completions.parse",
         new_callable=AsyncMock,
     ) as mock_parse:
+        # Forzamos a que retorne None o un objeto vacío simulando que la IA no encontró nada
         mock_response = AsyncMock()
         mock_response.choices = [AsyncMock(message=AsyncMock(parsed=None))]
         mock_parse.return_value = mock_response
@@ -64,71 +71,76 @@ async def test_parse_financial_text_invalid_input():
 
 @pytest.mark.anyio
 async def test_extraccion_modismos_ticos_rojos():
-    data = {
+    """Caso 1: Validar el uso de 'rojos' como miles de colones"""
+    mock_transaction_data = {
         "monto": 3000,
         "categoria": "Transporte",
         "tipo_movimiento": "Gasto",
         "detalle": "pasaje del bus",
     }
     mock_response = AsyncMock()
-    mock_response.choices = [
-        AsyncMock(message=AsyncMock(parsed=create_mock_parsed_response(data)))
-    ]
+    mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
 
     with patch(
         "services.openai_service.openai_client.beta.chat.completions.parse",
         new_callable=AsyncMock,
     ) as mock_parse:
         mock_parse.return_value = mock_response
-        resultado = await parse_financial_text(
-            text_input="Mae, apunte ahí que se me fueron 3 rojos en el pasaje del bus"
-        )
+
+        texto_usuario = "Mae, apunte ahí que se me fueron 3 rojos en el pasaje del bus"
+        resultado = await parse_financial_text(text_input=texto_usuario)
+
         assert resultado["monto"] == 3000
+        assert resultado["tipo_movimiento"].lower() == "gasto"
+        assert "pasaje" in resultado["detalle"].lower()
 
 
 @pytest.mark.anyio
 async def test_extraccion_modismos_ticos_tucan():
-    data = {
+    """Caso 2: Validar el uso de 'tucán' como billete de 10,000 colones"""
+    mock_transaction_data = {
         "monto": 10000,
         "categoria": "Ingresos",
         "tipo_movimiento": "Ingreso",
         "detalle": "brete que le hice al vecino",
     }
     mock_response = AsyncMock()
-    mock_response.choices = [
-        AsyncMock(message=AsyncMock(parsed=create_mock_parsed_response(data)))
-    ]
+    mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
 
     with patch(
         "services.openai_service.openai_client.beta.chat.completions.parse",
         new_callable=AsyncMock,
     ) as mock_parse:
         mock_parse.return_value = mock_response
-        resultado = await parse_financial_text(
-            text_input="Me entró un tucán por el brete que le hice al vecino"
-        )
+
+        texto_usuario = "Me entró un tucán por el brete que le hice al vecino"
+        resultado = await parse_financial_text(text_input=texto_usuario)
+
         assert resultado["monto"] == 10000
+        assert resultado["tipo_movimiento"].lower() == "ingreso"
+        assert "brete" in resultado["detalle"].lower()
 
 
 @pytest.mark.anyio
 async def test_extraccion_modismos_ticos_tejas():
-    data = {
+    """Caso 3: Validar el uso de 'tejas' como cientos de colones"""
+    mock_transaction_data = {
         "monto": 500,
         "categoria": "Alimentación",
         "tipo_movimiento": "Gasto",
         "detalle": "empanada en la pulpería",
     }
     mock_response = AsyncMock()
-    mock_response.choices = [
-        AsyncMock(message=AsyncMock(parsed=create_mock_parsed_response(data)))
-    ]
+    mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
 
     with patch(
         "services.openai_service.openai_client.beta.chat.completions.parse",
         new_callable=AsyncMock,
     ) as mock_parse:
         mock_parse.return_value = mock_response
-        resultado = await parse_financial_text(
-            text_input="Gasté 5 tejas en una empanada en la pulpería"
-        )
+
+        texto_usuario = "Gasté 5 tejas en una empanada en la pulpería"
+        resultado = await parse_financial_text(text_input=texto_usuario)
+
         assert resultado["monto"] == 500
+        assert resultado["tipo_movimiento"].lower() == "gasto"

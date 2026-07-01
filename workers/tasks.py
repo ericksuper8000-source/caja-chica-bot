@@ -2,80 +2,75 @@ import os
 import httpx
 import logging
 import asyncio
-from typing import Any, Callable, cast
 from workers.celery_app import celery_app
 from app.config import settings
 from services.sheets_service import append_transaction_to_sheet
-from services.openai_service import procesar_audio_a_transaccion
-from services.whatsapp_service import enviar_mensaje_whatsapp
 
 logger = logging.getLogger(__name__)
 
 
-async def run_pipeline(media_id: str, user_phone: str) -> str:
+@celery_app.task(name="workers.tasks.download_audio_task")
+def download_audio_task(media_id: str) -> str:
     """
-    Pipeline completo: Descarga, IA, Sheets y Notificación.
+    Pipeline Orquestador:
+    1. Descarga el audio desde los servidores de Meta.
+    2. [Fase 4 - Pendiente] Procesa con OpenAI Whisper y Chat API.
+    3. Persiste de forma segura en Google Sheets conectando el puente asíncrono.
     """
-    headers: dict[str, str] = {"Authorization": f"Bearer {settings.WHATSAPP_API_TOKEN}"}
-    file_path: str = f"/tmp/caja_chica/{media_id}.ogg"
+    headers = {"Authorization": f"Bearer {settings.WHATSAPP_API_TOKEN}"}
+    file_path = f"/tmp/caja_chica/{media_id}.ogg"
 
     try:
-        # A) Descarga
-        async with httpx.AsyncClient() as client:
-            meta_url: str = f"https://graph.facebook.com/v18.0/{media_id}"
-            response = await client.get(meta_url, headers=headers)
+        # ---------------------------------------------------------------------
+        # PASO A: Descarga del binario de Meta
+        # ---------------------------------------------------------------------
+        with httpx.Client() as client:
+            meta_url = f"https://graph.facebook.com/v18.0/{media_id}"
+            response = client.get(meta_url, headers=headers)
             response.raise_for_status()
-            media_data: dict[str, Any] = response.json()
+            media_data = response.json()
 
-            download_url: str = media_data.get("url", "")
-            audio_response = await client.get(download_url, headers=headers)
-            audio_content: bytes = audio_response.content
+            download_url = media_data.get("url")
+            if not download_url:
+                raise ValueError(f"No se encontró la URL para el media_id: {media_id}")
+
+            audio_response = client.get(download_url, headers=headers)
+            audio_response.raise_for_status()
+            audio_content = audio_response.content
 
         os.makedirs("/tmp/caja_chica", exist_ok=True)
         with open(file_path, "wb") as f:
             f.write(audio_content)
 
-        # B) Procesamiento IA
-        parsed_data: dict[str, Any] | None = await procesar_audio_a_transaccion(
-            file_path
-        )
+        logger.info(f"Audio descargado con éxito en: {file_path}")
 
-        if not parsed_data:
-            await enviar_mensaje_whatsapp(
-                user_phone, "No pude entender el audio, ¿podrías repetirlo?"
-            )
-            return "Error: IA no pudo procesar la entrada."
+        # ---------------------------------------------------------------------
+        # PASO B: Mock del Parser de OpenAI (Estructura de la Fase 4)
+        # ---------------------------------------------------------------------
+        fake_parsed_transaction = {
+            "monto": 3500,
+            "categoria": "Servicios",
+            "tipo_movimiento": "Gasto",
+            "detalle": "Prueba de Integración End-to-End Celery-Sheets",
+        }
 
-        # C) Persistencia
-        await append_transaction_to_sheet(parsed_data)
+        # ---------------------------------------------------------------------
+        # PASO C: Persistencia Asíncrona en Google Sheets vía Puente asyncio
+        # ---------------------------------------------------------------------
+        success = asyncio.run(append_transaction_to_sheet(fake_parsed_transaction))
+        if success:
+            logger.info("Integración E2E completada: Fila registrada en Google Sheets.")
+        else:
+            logger.error("Fallo la persistencia en el flujo de Celery.")
 
-        # D) Notificación al usuario
-        mensaje_confirmacion: str = (
-            f"✅ ¡Entendido, jefe! Registré: {parsed_data.get('detalle', 'Gasto')} "
-            f"por ₡{parsed_data.get('monto', 0)} en {parsed_data.get('categoria', 'Varios')}."
-        )
-        await enviar_mensaje_whatsapp(user_phone, mensaje_confirmacion)
-
-        return "Pipeline ejecutado con éxito"
+        return file_path
 
     except Exception as e:
-        logger.error(f"Error crítico en el pipeline: {e}")
-        return f"Error: {str(e)}"
+        logger.error(f"Error crítico en el pipeline de la tarea: {e}")
+        raise e
+
     finally:
+        # Limpieza obligatoria del archivo temporal para evitar fugas de almacenamiento
         if os.path.exists(file_path):
             os.remove(file_path)
-
-
-def download_audio_task(media_id: str, user_phone: str) -> str:
-    """
-    Tarea de Celery que inicia el pipeline asíncrono.
-    """
-    result: str = asyncio.run(run_pipeline(media_id, user_phone))
-    return result
-
-
-# Aplicación del decorador con cast explícito para satisfacer mypy --strict
-download_audio_task = cast(
-    Callable[[str, str], str],
-    celery_app.task(name="workers.tasks.download_audio_task")(download_audio_task),
-)
+            logger.info(f"Archivo temporal eliminado de forma segura: {file_path}")
