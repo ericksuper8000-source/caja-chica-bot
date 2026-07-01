@@ -1,8 +1,8 @@
-from celery import Celery  # type: ignore
+from celery import Celery
 from app.config import settings
 
 # Inicializamos la aplicación de Celery asignándole un nombre identificable
-celery_app: Celery = Celery(
+celery_app = Celery(
     "caja_chica_workers",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,

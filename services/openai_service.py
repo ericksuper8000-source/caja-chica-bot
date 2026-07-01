@@ -1,10 +1,11 @@
 import os
-from typing import Any, Optional, Literal
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+from typing import Optional, Literal
 from app.config import settings
 
 # Si la llave viene vacía (como en GitHub Actions), usamos un valor ficticio
+# para evitar que la inicialización en frío rompa la recolección de los tests.
 _api_key = settings.OPENAI_API_KEY or "sk-mock-key-for-testing-purposes-only"
 openai_client = AsyncOpenAI(api_key=_api_key)
 
@@ -26,11 +27,12 @@ class TransactionResponse(BaseModel):
 
 
 # ==========================================
-# 2. SERVICIO DE TRANSCRIPCIÓN (WHISPER)
+# 2. SERVICIO DE TRANSCRIPCIÓN (WHISPER) - PASO 2.4
 # ==========================================
 async def transcribir_audio_whisper(file_path: str) -> Optional[str]:
     """
-    Procesa audio a través de OpenAI Whisper API y retorna la transcripción.
+    Recibe la ruta local de un archivo de audio (.ogg / .mp3), lo procesa
+    a través de OpenAI Whisper API y retorna la transcripción adaptada al acento tico.
     """
     if not os.path.exists(file_path):
         print(f"Error: El archivo de audio no existe en la ruta {file_path}")
@@ -48,11 +50,12 @@ async def transcribir_audio_whisper(file_path: str) -> Optional[str]:
 
 
 # ==========================================
-# 3. SERVICIO DE EXTRACCIÓN ESTRUCTURADA
+# 3. SERVICIO DE EXTRACCIÓN ESTRUCTURADA - PASO 2.5
 # ==========================================
-async def parse_financial_text(text_input: str) -> Optional[dict[str, Any]]:
+async def parse_financial_text(text_input: str) -> Optional[dict]:
     """
-    Procesa texto con GPT-4o-mini y Structured Outputs.
+    Procesa una entrada de texto utilizando GPT-4o-mini y Structured Outputs.
+    Traduce los modismos costarricenses (ej: rojos, tejas, tucanes) a valores enteros.
     """
     if not text_input or not text_input.strip():
         return None
@@ -61,9 +64,9 @@ async def parse_financial_text(text_input: str) -> Optional[dict[str, Any]]:
         "Actúas como un extractor financiero experto en Costa Rica. Tu tarea es extraer la "
         "información financiera de los mensajes de los usuarios y estructurarla según el esquema provisto.\n\n"
         "Reglas estrictas de conversión para modismos costarricenses:\n"
-        "- 'rojos' o 'un tucán' equivalen a múltiplos de 5000.\n"
-        "- 'tejas' equivalen a múltiplos de 100.\n"
-        "Si el mensaje no contiene datos financieros válidos, retorna nulo."
+        "- 'rojos' o 'un tucán' equivalen a múltiplos de 5000 (Ej: 5 rojos = 5000, un tucán = 5000).\n"
+        "- 'tejas' equivalen a múltiplos de 100 (Ej: 3 tejas = 300, una teja = 100).\n"
+        "Si el mensaje no contiene datos financieros válidos o es un saludo genérico, debes retornar nulo."
     )
 
     try:
@@ -78,22 +81,11 @@ async def parse_financial_text(text_input: str) -> Optional[dict[str, Any]]:
 
         parsed_message = response.choices[0].message.parsed
         if parsed_message:
+            if isinstance(parsed_message, dict):
+                return parsed_message
             return parsed_message.model_dump()
         return None
 
     except Exception as e:
         print(f"Error procesando Structured Outputs con OpenAI: {str(e)}")
         return None
-
-
-# ==========================================
-# 4. FUNCIÓN PUENTE (ORQUESTADOR DE IA)
-# ==========================================
-async def procesar_audio_a_transaccion(file_path: str) -> Optional[dict[str, Any]]:
-    """
-    Orquestador de IA: Transcribe el audio y extrae los datos financieros.
-    """
-    text = await transcribir_audio_whisper(file_path)
-    if not text:
-        return None
-    return await parse_financial_text(text)
