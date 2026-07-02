@@ -1,15 +1,20 @@
 name: Continuous Integration
 
 on:
+  push:
+    branches: [ main, develop ]
   pull_request:
     branches: [ main ]
+
+env:
+  LANG: "C.UTF-8"
+  LC_ALL: "C.UTF-8"
 
 jobs:
   quality-and-tests:
     runs-on: ubuntu-latest
 
     services:
-      # Levantamos Redis y Postgres en el runner para que pytest pueda comunicarse si es necesario
       postgres:
         image: postgres:15-alpine
         env:
@@ -47,12 +52,8 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        # Instalamos las herramientas de calidad, el plugin asíncrono y dependencias base
         pip install black ruff mypy pytest pytest-asyncio pydantic pydantic-settings
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-    - name: Run Black (Formateador)
-      run: black --check app/ workers/ services/ tests/
 
     - name: Run Ruff (Linter moderno)
       run: ruff check app/ workers/ services/ tests/

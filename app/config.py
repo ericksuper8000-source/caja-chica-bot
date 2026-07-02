@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Meta/WhatsApp API (Campos con defaults vacíos para entornos de CI/CD y Mypy)
     WHATSAPP_API_TOKEN: str = Field(default="")
     WHATSAPP_VERIFY_TOKEN: str = Field(default="")
+    WHATSAPP_APP_SECRET: str = Field(default="")
     WHATSAPP_PHONE_NUMBER_ID: str = Field(default="")
 
     # OpenAI API
