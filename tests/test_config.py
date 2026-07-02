@@ -14,8 +14,7 @@ def test_config_valores_por_defecto_en_entorno_vacio() -> None:
 
     # Forzamos un entorno completamente limpio de variables de sistema
     with patch.dict(os.environ, {}, clear=True):
-        # Al pasar _env_file=None, forzamos a Pydantic a ignorar cualquier .env existente
-        settings_test = Settings(_env_file=None)
+        settings_test = Settings()
 
         # Validamos que se usen las cadenas vacías de resguardo
         assert settings_test.WHATSAPP_API_TOKEN == ""
