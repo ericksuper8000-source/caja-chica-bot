@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     # Meta/WhatsApp API
     WHATSAPP_API_TOKEN: str = Field(default="")
     WHATSAPP_VERIFY_TOKEN: str = Field(default="")
-    WHATSAPP_APP_SECRET: str = Field(default="")  # <-- Variable añadida para centralizar seguridad
+    WHATSAPP_APP_SECRET: str = Field(
+        default=""
+    )  # <-- Variable añadida para centralizar seguridad
     WHATSAPP_PHONE_NUMBER_ID: str = Field(default="")
 
     # OpenAI API
