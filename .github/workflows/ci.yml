@@ -56,11 +56,9 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Run Ruff (Linter moderno)
-      # Se eliminó 'services/' porque ahora están bajo 'app/'
       run: ruff check app/ workers/ tests/
 
     - name: Run Black (Formateador)
-      # Agregado para consistencia con tu entorno local
       run: black --check app/ workers/ tests/
 
     - name: Run Mypy (Validación estricta de Type Hints)
@@ -73,4 +71,4 @@ jobs:
         REDIS_URL: redis://localhost:6379/0
         META_WEBHOOK_VERIFY_TOKEN: test_token
         OPENAI_API_KEY: test_key
-      run: pytest tests/
+      run: PYTHONPATH=. pytest tests/

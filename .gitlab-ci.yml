@@ -2,10 +2,8 @@ stages:
   - quality-and-tests
 
 variables:
-  # Configuración para que las herramientas de Python reconozcan la codificación correcta
   LANG: "C.UTF-8"
   LC_ALL: "C.UTF-8"
-  # Configuración de variables para el contenedor de PostgreSQL
   POSTGRES_DB: "caja_chica_db"
   POSTGRES_USER: "postgres"
   POSTGRES_PASSWORD: "password"
@@ -15,7 +13,6 @@ quality-and-tests:
   stage: quality-and-tests
   image: python:3.12
   
-  # Inicializa los contenedores de soporte tal como lo hacía GitHub Actions
   services:
     - name: postgres:15-alpine
       alias: postgres
@@ -23,27 +20,23 @@ quality-and-tests:
       alias: redis
 
   before_script:
-    # Actualizar pip e instalar herramientas de calidad globalmente
     - python -m pip install --upgrade pip
     - pip install black ruff mypy pytest pytest-asyncio pydantic pydantic-settings
-    # Instalar las dependencias de la aplicación
     - if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
   script:
     # 1. Formateo con Black
-    # Se eliminó 'services/' porque ahora están bajo 'app/'
-    - black --check app/ workers/ tests/
+    - python -m black --check app/ workers/ tests/
     
     # 2. Linter con Ruff
-    - ruff check app/ workers/ tests/
+    - python -m ruff check app/ workers/ tests/
     
     # 3. Tipado estático con Mypy
-    - mypy --strict app/
+    - python -m mypy --strict app/
     
-    # 4. Pruebas unitarias con Pytest
-    - pytest tests/
+    # 4. Pruebas unitarias con Pytest (agregamos PYTHONPATH para que encuentre app/)
+    - PYTHONPATH=. python -m pytest tests/
 
-  # Reglas para ejecutar el pipeline
   only:
     - merge_requests
     - develop
