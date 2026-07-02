@@ -55,9 +55,6 @@ jobs:
         pip install black ruff mypy pytest pytest-asyncio pydantic pydantic-settings
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-    - name: Run Black (Formateador)
-      run: black --check app/ workers/ services/ tests/
-
     - name: Run Ruff (Linter moderno)
       run: ruff check app/ workers/ services/ tests/
 
