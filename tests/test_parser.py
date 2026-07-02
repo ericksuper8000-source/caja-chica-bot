@@ -12,11 +12,11 @@ with patch.dict(
         "OPENAI_API_KEY": "sk-mock-key-12345",
     },
 ):
-    from services.openai_service import parse_financial_text
+    from app.services.openai_service import parse_financial_text
 
 
 @pytest.mark.anyio
-async def test_parse_financial_text_success():
+async def test_parse_financial_text_success() -> None:
     """
     Valida que el servicio de OpenAI extraiga correctamente las entidades estructuradas
     utilizando modismos ticos y devolviendo el modelo tipado esperado.
@@ -35,7 +35,7 @@ async def test_parse_financial_text_success():
 
     # 3. Ejecutamos la prueba interceptando la llamada real a OpenAI
     with patch(
-        "services.openai_service.openai_client.beta.chat.completions.parse",
+        "app.services.openai_service.openai_client.beta.chat.completions.parse",
         new_callable=AsyncMock,
     ) as mock_parse:
         mock_parse.return_value = mock_response
@@ -44,6 +44,7 @@ async def test_parse_financial_text_success():
         resultado = await parse_financial_text(text_input=texto_usuario)
 
         # 4. Aserciones estrictas de negocio (Costa Rica)
+        assert resultado is not None
         assert resultado["monto"] == 5000
         assert resultado["categoria"] == "Transporte"
         assert resultado["tipo_movimiento"] == "Gasto"
@@ -51,13 +52,13 @@ async def test_parse_financial_text_success():
 
 
 @pytest.mark.anyio
-async def test_parse_financial_text_invalid_input():
+async def test_parse_financial_text_invalid_input() -> None:
     """
     Valida el comportamiento del sistema cuando el texto no contiene
     información financiera útil.
     """
     with patch(
-        "services.openai_service.openai_client.beta.chat.completions.parse",
+        "app.services.openai_service.openai_client.beta.chat.completions.parse",
         new_callable=AsyncMock,
     ) as mock_parse:
         # Forzamos a que retorne None o un objeto vacío simulando que la IA no encontró nada
@@ -70,7 +71,7 @@ async def test_parse_financial_text_invalid_input():
 
 
 @pytest.mark.anyio
-async def test_extraccion_modismos_ticos_rojos():
+async def test_extraccion_modismos_ticos_rojos() -> None:
     """Caso 1: Validar el uso de 'rojos' como miles de colones"""
     mock_transaction_data = {
         "monto": 3000,
@@ -82,7 +83,7 @@ async def test_extraccion_modismos_ticos_rojos():
     mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
 
     with patch(
-        "services.openai_service.openai_client.beta.chat.completions.parse",
+        "app.services.openai_service.openai_client.beta.chat.completions.parse",
         new_callable=AsyncMock,
     ) as mock_parse:
         mock_parse.return_value = mock_response
@@ -90,13 +91,14 @@ async def test_extraccion_modismos_ticos_rojos():
         texto_usuario = "Mae, apunte ahí que se me fueron 3 rojos en el pasaje del bus"
         resultado = await parse_financial_text(text_input=texto_usuario)
 
+        assert resultado is not None
         assert resultado["monto"] == 3000
         assert resultado["tipo_movimiento"].lower() == "gasto"
         assert "pasaje" in resultado["detalle"].lower()
 
 
 @pytest.mark.anyio
-async def test_extraccion_modismos_ticos_tucan():
+async def test_extraccion_modismos_ticos_tucan() -> None:
     """Caso 2: Validar el uso de 'tucán' como billete de 10,000 colones"""
     mock_transaction_data = {
         "monto": 10000,
@@ -108,7 +110,7 @@ async def test_extraccion_modismos_ticos_tucan():
     mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
 
     with patch(
-        "services.openai_service.openai_client.beta.chat.completions.parse",
+        "app.services.openai_service.openai_client.beta.chat.completions.parse",
         new_callable=AsyncMock,
     ) as mock_parse:
         mock_parse.return_value = mock_response
@@ -116,13 +118,14 @@ async def test_extraccion_modismos_ticos_tucan():
         texto_usuario = "Me entró un tucán por el brete que le hice al vecino"
         resultado = await parse_financial_text(text_input=texto_usuario)
 
+        assert resultado is not None
         assert resultado["monto"] == 10000
         assert resultado["tipo_movimiento"].lower() == "ingreso"
         assert "brete" in resultado["detalle"].lower()
 
 
 @pytest.mark.anyio
-async def test_extraccion_modismos_ticos_tejas():
+async def test_extraccion_modismos_ticos_tejas() -> None:
     """Caso 3: Validar el uso de 'tejas' como cientos de colones"""
     mock_transaction_data = {
         "monto": 500,
@@ -134,7 +137,7 @@ async def test_extraccion_modismos_ticos_tejas():
     mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
 
     with patch(
-        "services.openai_service.openai_client.beta.chat.completions.parse",
+        "app.services.openai_service.openai_client.beta.chat.completions.parse",
         new_callable=AsyncMock,
     ) as mock_parse:
         mock_parse.return_value = mock_response
@@ -142,5 +145,6 @@ async def test_extraccion_modismos_ticos_tejas():
         texto_usuario = "Gasté 5 tejas en una empanada en la pulpería"
         resultado = await parse_financial_text(text_input=texto_usuario)
 
+        assert resultado is not None
         assert resultado["monto"] == 500
         assert resultado["tipo_movimiento"].lower() == "gasto"
