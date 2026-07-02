@@ -15,12 +15,10 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Caja Chica AI Bot"
     ENVIRONMENT: str = Field(default="local")
 
-    # Meta/WhatsApp API
+    # Meta/WhatsApp API (Campos con defaults vacíos para entornos de CI/CD y Mypy)
     WHATSAPP_API_TOKEN: str = Field(default="")
     WHATSAPP_VERIFY_TOKEN: str = Field(default="")
-    WHATSAPP_APP_SECRET: str = Field(
-        default=""
-    )  # <-- Variable añadida para centralizar seguridad
+    WHATSAPP_APP_SECRET: str = Field(default="")
     WHATSAPP_PHONE_NUMBER_ID: str = Field(default="")
 
     # OpenAI API
@@ -39,5 +37,7 @@ class Settings(BaseSettings):
     GOOGLE_APPLICATION_CREDENTIALS: str = Field(default="")
 
 
-# Instanciación limpia y directa.
+# Instanciación limpia y directa. Mypy --strict no chillará porque todos los campos
+# tienen ahora un valor por defecto asignado mediante Field(), permitiendo que Pydantic
+# los sobreescriba fluidamente en producción a partir del entorno real.
 settings = Settings()
