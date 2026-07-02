@@ -56,7 +56,12 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Run Ruff (Linter moderno)
-      run: ruff check app/ workers/ services/ tests/
+      # Se eliminó 'services/' porque ahora están bajo 'app/'
+      run: ruff check app/ workers/ tests/
+
+    - name: Run Black (Formateador)
+      # Agregado para consistencia con tu entorno local
+      run: black --check app/ workers/ tests/
 
     - name: Run Mypy (Validación estricta de Type Hints)
       run: mypy --strict app/
