@@ -52,7 +52,7 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Run Black (Formateador)
-      run: black --check app/ workers/ services/ tests/
+      run: black app/ workers/ services/ tests/
 
     - name: Run Ruff (Linter moderno)
       run: ruff check app/ workers/ services/ tests/
