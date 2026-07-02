@@ -1,4 +1,4 @@
-# El Analista Financiero de Caja Chica via WhatsApp 🤖
+# El Analista Financiero de Caja Chica via WhatsApp PONYO
 
 Bot privado de automatizacion, captura y control financiero disenado para micro-PYMEs en Costa Rica. El sistema permite registrar de forma estructurada ingresos y gastos mediante el procesamiento asincrono de notas de voz y mensajes de texto enviados por WhatsApp, traduciendo modismos locales ("rojos", "tucanes", "tejas") a datos contables exactos y persistiendo la informacion de forma inmediata.
 
@@ -6,7 +6,7 @@ Este repositorio refleja un enfoque de ingenieria profesional con mentalidad de 
 
 ---
 
-## 🏗️ Arquitectura y Decisiones Tecnicas Basadas en Datos
+## ??? Arquitectura y Decisiones Tecnicas Basadas en Datos
 
 El sistema sigue un patron de microservicios contenerizados y asincronos para garantizar alta disponibilidad y cumplir con las restricciones de negocio:
 
@@ -19,21 +19,21 @@ El sistema sigue un patron de microservicios contenerizados y asincronos para ga
 
 ---
 
-## 📌 Estado del Proyecto y Linea de Tiempo (Checklist Ejecutado)
+## ??? Estado del Proyecto y Linea de Tiempo (Checklist Ejecutado)
 
 El desarrollo se ejecuta bajo una metodologia estrictamente secuencial (TDD), donde ninguna feature avanza si la suite de pruebas unitarias no esta en verde.
 
-### 📅 Semana 1: Infraestructura y Handshake con Meta *(Tiempo estimado: 12h / Real: 14h)*
+### ?? Semana 1: Infraestructura y Handshake con Meta *(Tiempo estimado: 12h / Real: 14h)*
 - [x] **Fase 0: Entorno Base:** Arquitectura multi-stage en Docker Compose, sincronizacion cruzada de pipelines en GitHub/GitLab, politicas de ramas (`main` protegida, desarrollo en `develop`).
 - [x] **Pasos 1.1 a 1.3: Capa de Seguridad:** Endpoint `GET` para resolver el desafio `hub.challenge` de Meta y endpoint `POST` integrado con esquemas Pydantic.
 - [x] **Escudo Criptografico:** Verificacion de firmas HMAC-SHA256 (`X-Hub-Signature-256`) nativa en `app/core/security.py`.
 
-### 📅 Semana 2: Asincronia, IA y Suite "Test Tico" *(Tiempo estimado: 16h / Real: 15h)*
+### ?? Semana 2: Asincronia, IA y Suite "Test Tico" *(Tiempo estimado: 16h / Real: 15h)*
 - [x] **Paso 2.1 a 2.3: Orquestacion Asincrona:** Configuracion de instancias de Celery con Redis e implementacion de la tarea distribuida `download_audio_task`.
 - [x] **Paso 2.4 y 2.5: Integracion de IA:** Desarrollo del wrapper asoncronico para Whisper y el extractor financiero estructurado con GPT-4o-mini.
-- [x] **Paso 2.6: Suite de Pruebas "Test Tico":** Implementacion de 18 pruebas unitarias que evaluan el parseo correcto de modismos contables costarricenses (Ej: "3 rojos" → 3000, "un tucan" → 5000).
+- [x] **Paso 2.6: Suite de Pruebas "Test Tico":** Implementacion de 18 pruebas unitarias que evaluan el parseo correcto de modismos contables costarricenses (Ej: "3 rojos" ? 3000, "un tucan" ? 5000).
 
-### 📅 Semana 3: Persistencia Fisica en Hojas de Calculo *(Tiempo estimado: 10h / Real: 12h)*
+### ?? Semana 3: Persistencia Fisica en Hojas de Calculo *(Tiempo estimado: 10h / Real: 12h)*
 - [x] **Paso 3.1: Autenticacion GCP:** Integracion segura con Google Cloud Platform utilizando cuentas de servicio de manera hermetica a traves de variables de entorno.
 - [x] **Paso 3.2: Pipeline de Inyeccion Fisica:** Implementacion del servicio persistente `sheets_service.py` encargado de dar formato, mapear campos e insertar registros de forma atomica.
 - [x] **Paso 3.3: Orquestacion Celery-Sheets:** Encapsulamiento del pipeline de Sheets dentro de los workers asincronos distribuidos en `workers/tasks.py`.
@@ -41,7 +41,7 @@ El desarrollo se ejecuta bajo una metodologia estrictamente secuencial (TDD), do
 
 ---
 
-## ⏱️ Tiempos de Implementacion y Estimados
+## ?? Tiempos de Implementacion y Estimados
 
 | Fase / Funcionalidad | Esfuerzo Estimado | Esfuerzo Real | Estado |
 | :--- | :---: | :---: | :---: |
@@ -53,7 +53,7 @@ El desarrollo se ejecuta bajo una metodologia estrictamente secuencial (TDD), do
 
 ---
 
-## 🆕 Nuevas Funcionalidades Agregadas (Detalle Tecnico Fase 3)
+## ?? Nuevas Funcionalidades Agregadas (Detalle Tecnico Fase 3)
 
 ### Pipeline Asincrono de Persistencia en Google Sheets
 Se ha acoplado un canal de persistencia que extrae los datos JSON estructurados por los LLMs y los transforma de inmediato en filas ordenadas dentro de una hoja de calculo remota.
@@ -62,7 +62,7 @@ Se ha acoplado un canal de persistencia que extrae los datos JSON estructurados 
 
 ---
 
-## 🔄 Retrospectiva: ¿Que hariamos distinto en un Rediseno?
+## ?? Retrospectiva: ?Que hariamos distinto en un Rediseno?
 
 Si tuvieramos que reconstruir esta capa de persistencia desde cero, implementariamos las siguientes mejoras arquitectonicas:
 
@@ -71,11 +71,27 @@ Si tuvieramos que reconstruir esta capa de persistencia desde cero, implementari
 
 ---
 
-## ✅ Calidad de Codigo e Integracion Continua (CI/CD)
+## ??? Calidad de Codigo e Integracion Continua (CI/CD)
 
 Este repositorio implementa pipelines automatizados identicos tanto en **GitHub Actions** (`.github/workflows/ci.yml`) como en **GitLab CI/CD** (`.gitlab-ci.yml`). El pipeline actua como un guardrail bloqueante para proteger las ramas principales de regresiones:
 
 1.  **Black:** Formateador estricto para estilo homogeneo.
 2.  **Ruff:** Linter de alto rendimiento para interceptar codigo muerto y malas practicas.
 3.  **Mypy (--strict):** Validacion estricta de Type Hints sobre todo el ecosistema de configuraciones.
-4.  **Pytest (Suite Asincrona):** 18 pruebas unitarias validadas que corren
+4.  **Pytest (Suite Asincrona):** 18 pruebas unitarias validadas que corren de manera automatizada en cada push remoto.
+
+### ??? Verificacion Local Preventiva
+Ejecuta estos comandos en tu terminal local antes de realizar un push para garantizar la aceptacion del pipeline en la nube:
+
+```bash
+# Formatear y verificar estilo estatico completo
+black --check app/ workers/ services/ tests/
+
+# Analizar y auto-corregir con el linter ruff
+ruff check app/ workers/ services/ tests/ --fix
+
+# Validar tipado estricto
+mypy --strict app/
+
+# Correr la suite de pruebas completa
+pytest tests/
