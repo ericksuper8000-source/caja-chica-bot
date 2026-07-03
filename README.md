@@ -1,5 +1,6 @@
 # El Analista Financiero de Caja Chica via WhatsApp 🤖
 
+07/03/2026
 Bot privado de automatizacion, captura y control financiero disenado para micro-PYMEs en Costa Rica. El sistema permite registrar de forma estructurada ingresos y gastos mediante el procesamiento asincrono de notas de voz y mensajes de texto enviados por WhatsApp, traduciendo modismos locales ("rojos", "tucanes", "tejas") a datos contables exactos y persistiendo la informacion de forma inmediata.
 
 Este repositorio refleja un enfoque de ingenieria profesional con mentalidad de escalamiento: **Spec-Driven Development (SDD)**, **Test-Driven Development (TDD)**, analisis estatico estricto y automatizacion de infraestructura reflejada en pipelines de CI/CD espejados.
