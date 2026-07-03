@@ -56,7 +56,7 @@ jobs:
         if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
     - name: Run Ruff (Linter moderno)
-      run: ruff check app/ workers/ services/ tests/
+      run: ruff check --fix app/ workers/ services/ tests/
 
     - name: Run Mypy (Validación estricta de Type Hints)
       run: mypy --strict app/
