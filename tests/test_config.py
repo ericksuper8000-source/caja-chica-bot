@@ -1,5 +1,4 @@
 import os
-import sys
 import importlib
 from unittest.mock import patch
 import app.config  # Importamos el módulo base
@@ -13,7 +12,6 @@ def test_config_valores_por_defecto_en_entorno_vacio() -> None:
     """
     # Forzamos la recarga del módulo para limpiar cualquier configuración cacheada en memoria
     importlib.reload(app.config)
-    from app.config import Settings
 
     # Forzamos un entorno completamente limpio de variables de sistema
     with patch.dict(os.environ, {}, clear=True):

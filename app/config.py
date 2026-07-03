@@ -3,8 +3,9 @@ from typing import ClassVar
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
-    # Ya no forzamos una lógica compleja aquí. 
+    # Ya no forzamos una lógica compleja aquí.
     # Dejamos env_file en None por defecto para máxima seguridad en tests.
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_file=os.getenv("ENV_FILE", None),
@@ -35,6 +36,7 @@ class Settings(BaseSettings):
     # Google Sheets
     GOOGLE_SHEETS_SPREADSHEET_ID: str = Field(default="")
     GOOGLE_APPLICATION_CREDENTIALS: str = Field(default="")
+
 
 # Instanciación
 settings = Settings()
