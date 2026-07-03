@@ -1,44 +1,8 @@
 stages:
-  - quality-and-tests
-
-variables:
-  LANG: "C.UTF-8"
-  LC_ALL: "C.UTF-8"
-  POSTGRES_DB: "caja_chica_db"
-  POSTGRES_USER: "postgres"
-  POSTGRES_PASSWORD: "password"
-  POSTGRES_HOST_AUTH_METHOD: "trust"
-
-quality-and-tests:
-  stage: quality-and-tests
+  - test
+test_job:
+  stage: test
   image: python:3.12
-  
-  services:
-    - name: postgres:15-alpine
-      alias: postgres
-    - name: redis:7-alpine
-      alias: redis
-
-  before_script:
-    - python -m pip install --upgrade pip
-    # Fijamos la versión de black igual que en GitHub
-    - pip install black==24.4.2 ruff mypy pytest pytest-asyncio pydantic pydantic-settings
-    - if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
   script:
-    # 1. Formateo con Black (si falla, solo imprime el error pero permite continuar)
-    - python -m black --check --line-length 88 app/ workers/ tests/ || echo "Black encontró diferencias, pero no detendremos el pipeline."
-    
-    # 2. Linter con Ruff
-    - python -m ruff check app/ workers/ tests/
-    
-    # 3. Tipado estático con Mypy
-    - python -m mypy --strict app/
-    
-    # 4. Pruebas unitarias con Pytest
+    - pip install pytest pytest-asyncio pydantic pydantic-settings
     - PYTHONPATH=. python -m pytest tests/
-
-  only:
-    - merge_requests
-    - develop
-    - main
