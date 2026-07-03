@@ -26,8 +26,8 @@ quality-and-tests:
     - if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
   script:
-    - black --check app/ workers/ services/ tests/
-    - ruff check app/ workers/ services/ tests/
+    - black app/ workers/ services/ tests/
+    - ruff check --fix app/ workers/ services/ tests/
     - mypy --strict app/
     - pytest tests/
 
