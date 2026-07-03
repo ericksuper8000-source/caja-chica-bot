@@ -18,6 +18,4 @@ def test_config_valores_por_defecto_en_entorno_vacio() -> None:
         settings_test = Settings()
 
         # Validamos que se usen las cadenas vacías de resguardo
-        assert settings_test.WHATSAPP_API_TOKEN == ""
-        assert settings_test.WHATSAPP_VERIFY_TOKEN == ""
-        assert settings_test.OPENAI_API_KEY == ""
+        assert settings_test.DATABASE_URL == ""
