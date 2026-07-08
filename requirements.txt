@@ -64,3 +64,6 @@ ujson==5.13.0
 urllib3==2.7.0
 uvicorn==0.30.1
 uvloop==0.22.1; sys_platform != 'win32'
+pytest
+pytest-asyncio
+httpx
