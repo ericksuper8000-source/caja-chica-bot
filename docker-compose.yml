@@ -10,7 +10,7 @@ services:
       - PYTHONPATH=/code
     volumes:
       - .:/code
-      - ./caja-chica-bot-prod-81dfc4656ec5.json:/code/caja-chica-bot-prod-81dfc4656ec5.json
+      - C:/secrets/caja-chica-bot-prod-81dfc4656ec5.json:/code/caja-chica-bot-prod-81dfc4656ec5.json
     depends_on:
       - redis
       - db
@@ -24,7 +24,7 @@ services:
       - PYTHONPATH=/code
     volumes:
       - .:/code
-      - ./caja-chica-bot-prod-81dfc4656ec5.json:/code/caja-chica-bot-prod-81dfc4656ec5.json
+      - C:/secrets/caja-chica-bot-prod-81dfc4656ec5.json:/code/caja-chica-bot-prod-81dfc4656ec5.json
     depends_on:
       - redis
 
