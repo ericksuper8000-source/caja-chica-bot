@@ -9,6 +9,8 @@ variables:
   POSTGRES_PASSWORD: "password"
   POSTGRES_HOST_AUTH_METHOD: "trust"
   ENVIRONMENT: "test"
+  WHATSAPP_VERIFY_TOKEN: "mi_token_secreto_tico_123"
+  WHATSAPP_APP_SECRET: "mi_clave_secreta_de_meta_super_segura"
 
 quality-and-tests:
   stage: quality-and-tests

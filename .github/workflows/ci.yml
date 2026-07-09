@@ -9,7 +9,9 @@ on:
 env:
   LANG: "C.UTF-8"
   LC_ALL: "C.UTF-8"
-  ENVIRONMENT: "test" # Mantenemos esto aquí para que sea global
+  ENVIRONMENT: "test"
+  WHATSAPP_VERIFY_TOKEN: "mi_token_secreto_tico_123"
+  WHATSAPP_APP_SECRET: "mi_clave_secreta_de_meta_super_segura"
 
 jobs:
   quality-and-tests:
@@ -20,8 +22,8 @@ jobs:
         image: postgres:15-alpine
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: password # Igualado a GitLab
-          POSTGRES_DB: caja_chica_db    # Igualado a GitLab
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: caja_chica_db
         ports:
           - 5432:5432
         options: >-
