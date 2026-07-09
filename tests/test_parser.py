@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch, AsyncMock
 from services.openai_service import parse_financial_text
 
+
 @pytest.mark.anyio
 async def test_parse_financial_text_success():
     """

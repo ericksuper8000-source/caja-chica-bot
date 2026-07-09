@@ -2,6 +2,7 @@ import sys
 import os
 from unittest.mock import MagicMock, patch
 
+
 def test_download_audio_task_exito() -> None:
     """Valida el flujo exitoso de la tarea asíncrona simulando las
     respuestas HTTP de Meta utilizando httpx.
@@ -21,7 +22,7 @@ def test_download_audio_task_exito() -> None:
         "OPENAI_API_KEY": "test_openai_key",
         "DATABASE_URL": "postgresql://user:pass@localhost/db",
         "REDIS_URL": "redis://localhost:6379/0",
-        "APPDATA": os.environ.get("APPDATA", "C:\\temp")
+        "APPDATA": os.environ.get("APPDATA", "C:\\temp"),
     }
 
     # 3. Patching sin borrar todo el entorno (evita KeyError)

@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from services.openai_service import transcribir_audio_whisper
 
+
 @pytest.mark.anyio
 async def test_transcribir_audio_whisper_exito() -> None:
     """Valida que la función transcribir_audio_whisper lea el archivo local
