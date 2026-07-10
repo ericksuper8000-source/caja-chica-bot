@@ -85,9 +85,9 @@ async def test_extraccion_modismos_ticos_rojos():
 
 @pytest.mark.anyio
 async def test_extraccion_modismos_ticos_tucan():
-    """Caso 2: Validar el uso de 'tucán' como billete de 10,000 colones"""
+    """Caso 2: Validar el uso de 'tucán' como billete de 5,000 colones"""
     mock_transaction_data = {
-        "monto": 10000,
+        "monto": 5000,
         "categoria": "Ingresos",
         "tipo_movimiento": "Ingreso",
         "detalle": "brete que le hice al vecino",
@@ -104,7 +104,7 @@ async def test_extraccion_modismos_ticos_tucan():
         texto_usuario = "Me entró un tucán por el brete que le hice al vecino"
         resultado = await parse_financial_text(text_input=texto_usuario)
 
-        assert resultado["monto"] == 10000
+        assert resultado["monto"] == 5000
         assert resultado["tipo_movimiento"].lower() == "ingreso"
         assert "brete" in resultado["detalle"].lower()
 
