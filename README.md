@@ -1,82 +1,77 @@
-# El Analista Financiero de Caja Chica via WhatsApp 🤖
+# 🤖 El Analista Financiero de Caja Chica vía WhatsApp
+**Fecha de inicio:** 10/07/2026  
+**Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
-07/03/2026
-Bot privado de automatizacion, captura y control financiero disenado para micro-PYMEs en Costa Rica. El sistema permite registrar de forma estructurada ingresos y gastos mediante el procesamiento asincrono de notas de voz y mensajes de texto enviados por WhatsApp, traduciendo modismos locales ("rojos", "tucanes", "tejas") a datos contables exactos y persistiendo la informacion de forma inmediata.
-
-Este repositorio refleja un enfoque de ingenieria profesional con mentalidad de escalamiento: **Spec-Driven Development (SDD)**, **Test-Driven Development (TDD)**, analisis estatico estricto y automatizacion de infraestructura reflejada en pipelines de CI/CD espejados.
-
----
-
-## 🏗️ Arquitectura y Decisiones Tecnicas Basadas en Datos
-
-El sistema sigue un patron de microservicios contenerizados y asincronos para garantizar alta disponibilidad y cumplir con las restricciones de negocio:
-
-* **Backend API:** Python 3.12 + FastAPI. Elegido por su velocidad nativa y validacion automatica en tiempo de ejecucion con Pydantic v2.
-* **Procesamiento Asincrono (Celery + Redis):** **Decision Critica de Ingenieria.** Meta exige que el webhook de WhatsApp responda con un HTTP 200 OK en menos de 2 segundos. Operaciones pesadas como descargar el audio de Meta, transcribirlo con OpenAI Whisper y procesarlo con GPT-4o-mini toman mas de 2 segundos. Celery delega estas tareas a segundo plano, garantizando respuestas inmediatas a la API de Meta.
-* **Base de Datos:** PostgreSQL 15+ para auditoria, persistencia de logs y preparacion de aislamiento de datos (*Data Isolation*).
-* **APIs de IA:** OpenAI Whisper API para la transcripcion adaptada al contexto tico y GPT-4o-mini utilizando *Structured Outputs* para asegurar que el JSON extraido se acople perfectamente a los esquemas de Pydantic sin mutaciones inesperadas.
-* **Capa de Persistencia Externa (Fase 3):** Conexion fisica asincrona hacia Google Sheets mediante la inyeccion atomica de datos estructurados con `gspread` y `google-auth`.
-* **Proxy Inverso:** Caddy Server para el manejo automatizado y nativo de certificados SSL (HTTPS obligatorio por los requerimientos de seguridad de Meta).
+El sistema permite registrar ingresos y gastos mediante procesamiento asincrónico de notas de voz y mensajes de texto enviados por WhatsApp, traduciendo modismos locales ("rojos", "tucanes", "tejas") a datos contables exactos y persistiendo la información de forma inmediata.
 
 ---
 
-## 📌 Estado del Proyecto y Linea de Tiempo (Checklist Ejecutado)
+## 🏗️ Arquitectura y Decisiones Técnicas Basadas en Datos
+El sistema sigue un patrón de **microservicios contenerizados y asincrónicos** para garantizar alta disponibilidad y cumplir con las restricciones de negocio:
 
-El desarrollo se ejecuta bajo una metodologia estrictamente secuencial (TDD), donde ninguna feature avanza si la suite de pruebas unitarias no esta en verde.
-
-### 📅 Semana 1: Infraestructura y Handshake con Meta *(Tiempo estimado: 12h / Real: 14h)*
-- [x] **Fase 0: Entorno Base:** Arquitectura multi-stage en Docker Compose, sincronizacion cruzada de pipelines en GitHub/GitLab, politicas de ramas (`main` protegida, desarrollo en `develop`).
-- [x] **Pasos 1.1 a 1.3: Capa de Seguridad:** Endpoint `GET` para resolver el desafio `hub.challenge` de Meta y endpoint `POST` integrado con esquemas Pydantic.
-- [x] **Escudo Criptografico:** Verificacion de firmas HMAC-SHA256 (`X-Hub-Signature-256`) nativa en `app/core/security.py`.
-
-### 📅 Semana 2: Asincronia, IA y Suite "Test Tico" *(Tiempo estimado: 16h / Real: 15h)*
-- [x] **Paso 2.1 a 2.3: Orquestacion Asincrona:** Configuracion de instancias de Celery con Redis e implementacion de la tarea distribuida `download_audio_task`.
-- [x] **Paso 2.4 y 2.5: Integracion de IA:** Desarrollo del wrapper asoncronico para Whisper y el extractor financiero estructurado con GPT-4o-mini.
-- [x] **Paso 2.6: Suite de Pruebas "Test Tico":** Implementacion de 18 pruebas unitarias que evaluan el parseo correcto de modismos contables costarricenses (Ej: "3 rojos" → 3000, "un tucan" → 5000).
-
-### 📅 Semana 3: Persistencia Fisica en Hojas de Calculo *(Tiempo estimado: 10h / Real: 12h)*
-- [x] **Paso 3.1: Autenticacion GCP:** Integracion segura con Google Cloud Platform utilizando cuentas de servicio de manera hermetica a traves de variables de entorno.
-- [x] **Paso 3.2: Pipeline de Inyeccion Fisica:** Implementacion del servicio persistente `sheets_service.py` encargado de dar formato, mapear campos e insertar registros de forma atomica.
-- [x] **Paso 3.3: Orquestacion Celery-Sheets:** Encapsulamiento del pipeline de Sheets dentro de los workers asincronos distribuidos en `workers/tasks.py`.
-- [x] **Paso 3.4: Robustez CI/CD Multicloud:** Modificacion de la inicializacion de configuraciones globales para superar la verificacion estricta de Linters (`mypy --strict`, `black`, `ruff`) y Pytest en entornos virtuales aislados.
+- **Backend API:** Python 3.12 + FastAPI (validación automática con Pydantic v2).
+- **Procesamiento Asincrónico:** Celery + Redis. Respuesta inmediata al webhook de WhatsApp (<2s).
+- **Base de Datos:** PostgreSQL 15+ (auditoría y aislamiento de datos).
+- **APIs de IA:** OpenAI Whisper API + GPT-4o-mini con Structured Outputs.
+- **Persistencia Externa (Fase 3):** Google Sheets vía gspread + google-auth.
+- **Proxy Inverso:** Caddy Server (SSL nativo y automatizado).
 
 ---
 
-## ⏱️ Tiempos de Implementacion y Estimados
+## 📌 Estado del Proyecto y Línea de Tiempo
+Metodología: **TDD estricto** (ninguna feature avanza si las pruebas no están en verde).
 
-| Fase / Funcionalidad | Esfuerzo Estimado | Esfuerzo Real | Estado |
-| :--- | :---: | :---: | :---: |
-| **Fase 0:** Configuracion Docker & CI/CD Espejo | 4 horas | 5 horas | Completado |
-| **Fase 1:** Seguridad Webhook & Validacion HMAC | 8 horas | 9 horas | Completado |
-| **Fase 2:** Orquestacion Celery + Modelos de IA | 16 horas | 15 horas | Completado |
-| **Fase 3:** Integracion Fisica con Google Sheets y Refactor de Tipado en CI | 10 horas | 12 horas | Completado |
-| **Fase 4:** OpenAI Assistant Integration & Respuestas Dinamicas WhatsApp | 14 horas | *Por ejecutar* | Pendiente |
+### 📅 Semana 1: Infraestructura y Handshake con Meta
+- [x] Fase 0: Entorno Base (Docker Compose, CI/CD espejado, ramas protegidas).
+- [x] Endpoints GET/POST con Pydantic.
+- [x] Verificación HMAC-SHA256 en `app/core/security.py`.
 
----
+### 📅 Semana 2: Asincronía, IA y Suite "Test Tico"
+- [x] Configuración Celery + Redis (`download_audio_task`).
+- [x] Wrapper asincrónico para Whisper + extractor financiero con GPT-4o-mini.
+- [x] Suite de 18 pruebas unitarias para modismos contables costarricenses.
 
-## 🆕 Nuevas Funcionalidades Agregadas (Detalle Tecnico Fase 3)
-
-### Pipeline Asincrono de Persistencia en Google Sheets
-Se ha acoplado un canal de persistencia que extrae los datos JSON estructurados por los LLMs y los transforma de inmediato en filas ordenadas dentro de una hoja de calculo remota.
-* **Inicializacion Segura con Fallbacks:** La clase de configuraciones centrales (`app/config.py`) fue blindada utilizando `Field(default="")` de Pydantic v2. Esto permite que la aplicacion se auto-instancie de manera segura en entornos de compilacion de CI/CD (GitHub Actions y GitLab) donde las llaves de produccion no estan pobladas, evitando interrupciones catastroficas en el parseo de pruebas locales.
-* **Cumplimiento Estricto de Mypy:** Se reestructuro la declaracion de tipos de Pydantic Settings para satisfacer el tipado estricto (`--strict`), eliminando advertencias de argumentos perdidos en constructores mediante la asignacion explicita de valores por defecto tipados.
-
----
-
-## 🔄 Retrospectiva: ¿Que hariamos distinto en un Rediseno?
-
-Si tuvieramos que reconstruir esta capa de persistencia desde cero, implementariamos las siguientes mejoras arquitectonicas:
-
-1.  **Eliminacion Completa de Dependencias Sincronas (gspread):** La libreria `gspread` realiza llamadas bloqueantes de I/O por debajo. En un entorno de alto trafico, aunque este delegado a un worker de Celery, bloquea el hilo del worker. Reemplazariamos esto utilizando la API REST nativa de Google de forma asincrona mediante `httpx` o integrando `aiogspread`.
-2.  **Plugin de Mypy para Pydantic Nativo:** Para evitar tener que llenar la clase `Settings` con campos por defecto vacios (`default=""`), se configuraria un archivo `mypy.ini` estricto que cargue explicitamente el plugin de Pydantic (`plugins = pydantic.mypy`). Esto permitiria mantener los atributos de variables de entorno como estrictamente requeridos sin disparar errores falsos positivos en el analizador estatico durante el analisis del constructor.
+### 📅 Semana 3: Persistencia Física y Saneamiento
+- [x] Autenticación GCP.
+- [x] Servicio `sheets_service.py`.
+- [x] Orquestación Celery-Sheets.
+- [x] Normalización de paquetes Python (`__init__.py` en `app/core/` y `app/schemas/`).
 
 ---
 
-## ✅ Calidad de Codigo e Integracion Continua (CI/CD)
+## ⏱️ Tiempos de Implementación
+| Fase | Estimado | Real | Estado |
+|------|----------|------|--------|
+| Configuración Docker & CI/CD | 4h | 5h | ✅ Completado |
+| Seguridad Webhook & HMAC | 8h | 9h | ✅ Completado |
+| Orquestación Celery + IA | 16h | 15h | ✅ Completado |
+| Integración Sheets & Refactor | 10h | 14h | ✅ Completado |
+| OpenAI Assistant Integration | 14h | - | ⏳ Pendiente |
 
-Este repositorio implementa pipelines automatizados identicos tanto en **GitHub Actions** (`.github/workflows/ci.yml`) como en **GitLab CI/CD** (`.gitlab-ci.yml`). El pipeline actua como un guardrail bloqueante para proteger las ramas principales de regresiones:
+---
 
-1.  **Black:** Formateador estricto para estilo homogeneo.
-2.  **Ruff:** Linter de alto rendimiento para interceptar codigo muerto y malas practicas.
-3.  **Mypy (--strict):** Validacion estricta de Type Hints sobre todo el ecosistema de configuraciones.
-4.  **Pytest (Suite Asincrona):** 18 pruebas unitarias validadas que corren
+## 🆕 Nuevas Funcionalidades y Mejoras
+### Saneamiento de Estructura de Paquetes
+- Añadidos `__init__.py` en `app/core/` y `app/schemas/`.
+- Actualización de `spec.md` eliminando referencias huérfanas.
+- Validación CI/CD con 19 pruebas unitarias.
+
+### Pipeline Asíncrono de Persistencia en Google Sheets
+- Transformación inmediata de JSON estructurado en filas ordenadas.
+- Configuración blindada con `Field(default="")` de Pydantic v2.
+- Tipado estricto con `mypy --strict`.
+
+---
+
+## 🔄 Retrospectiva: ¿Qué haríamos distinto?
+- Sustituir **gspread** por API REST nativa de Google (asincronía con `httpx`).
+- Configurar `mypy.ini` con plugin `pydantic.mypy`.
+
+---
+
+## ✅ Calidad de Código y CI/CD
+Pipelines idénticos en GitHub Actions y GitLab CI/CD con:
+- **Black:** Formateador estricto.
+- **Ruff:** Linter de alto rendimiento.
+- **Mypy (--strict):** Validación estricta de Type Hints.
+- **Pytest:** 19 pruebas unitarias validadas (suite asincrónica).
