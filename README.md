@@ -1,5 +1,5 @@
 # 🤖 El Analista Financiero de Caja Chica vía WhatsApp
-**Fecha de inicio:** 10/07/20266  
+**Fecha de inicio:** 10/07/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 El sistema permite registrar ingresos y gastos mediante procesamiento asincrónico de notas de voz y mensajes de texto enviados por WhatsApp, traduciendo modismos locales ("rojos", "tucanes", "tejas") a datos contables exactos y persistiendo la información de forma inmediata.
@@ -32,10 +32,16 @@ Metodología: **TDD estricto** (ninguna feature avanza si las pruebas no están 
 - [x] Suite de 18 pruebas unitarias para modismos contables costarricenses.
 
 ### 📅 Semana 3: Persistencia Física y Saneamiento
-- [x] Autenticación GCP.
+- [x] Autenticación GCP (incl. gestión segura de secretos).
 - [x] Servicio `sheets_service.py`.
 - [x] Orquestación Celery-Sheets.
 - [x] Normalización de paquetes Python (`__init__.py` en `app/core/` y `app/schemas/`).
+
+---
+
+## 🛡️ Seguridad y Endurecimiento (Hardened)
+- **Gestión de Secretos:** Implementación de blindaje de credenciales mediante `pydantic-settings` y variables de entorno. 
+- **Aislamiento de Seguridad:** Eliminación de archivos JSON de credenciales del VCS (Git) y configuración de `.gitignore` estricto para evitar filtraciones.
 
 ---
 
@@ -53,12 +59,10 @@ Metodología: **TDD estricto** (ninguna feature avanza si las pruebas no están 
 ## 🆕 Nuevas Funcionalidades y Mejoras
 ### Saneamiento de Estructura de Paquetes
 - Añadidos `__init__.py` en `app/core/` y `app/schemas/`.
-- Actualización de `spec.md` eliminando referencias huérfanas.
 - Validación CI/CD con 19 pruebas unitarias.
 
 ### Pipeline Asíncrono de Persistencia en Google Sheets
 - Transformación inmediata de JSON estructurado en filas ordenadas.
-- Configuración blindada con `Field(default="")` de Pydantic v2.
 - Tipado estricto con `mypy --strict`.
 
 ---
