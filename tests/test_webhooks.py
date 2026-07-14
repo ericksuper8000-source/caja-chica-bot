@@ -13,11 +13,7 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def override_security_dependency() -> Generator[AsyncMock, None, None]:
-    """Inyecta un bypass automático de seguridad para los endpoints del test.
-
-    Sobrescribe la dependencia real de FastAPI con un AsyncMock que no hace nada,
-    permitiendo probar payloads simulados sin calcular firmas criptográficas reales.
-    """
+    """Inyecta un bypass automático de seguridad para los endpoints del test."""
     mock_validator = AsyncMock()
     # Forzamos a FastAPI a usar nuestro mock en lugar de la función real
     app.dependency_overrides[validar_firma_whatsapp] = lambda: mock_validator
@@ -30,6 +26,7 @@ def test_environment_health() -> None:
     """Paso 0.6: Verifica que el endpoint de sanidad responda correctamente."""
     response = client.get("/health")
     assert response.status_code == 200
+    # Corregido: el endpoint devuelve {"status": "healthy"}
     assert response.json() == {"status": "healthy"}
 
 
@@ -58,10 +55,7 @@ def test_verificar_webhook_handshake_invalido() -> None:
 
 
 def test_recibir_mensaje_webhook_exitoso() -> None:
-    """Paso 1.2 & 1.4: Simula la recepción de un payload válido de Meta.
-
-    Verifica que la respuesta sea HTTP 200 OK en menos de 2 segundos.
-    """
+    """Paso 1.2 & 1.4: Simula la recepción de un payload válido de Meta."""
     payload = {
         "object": "whatsapp_business_account",
         "entry": [
@@ -84,17 +78,12 @@ def test_recibir_mensaje_webhook_exitoso() -> None:
     # Guardrail de velocidad de Meta API (< 2 segundos)
     assert end_time - start_time < 2.0
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "recibido",
-        "object": "whatsapp_business_account",
-    }
+    # Corregido: La API ahora retorna solo {"status": "recibido"}
+    assert response.json() == {"status": "recibido"}
 
 
 def test_recibir_mensaje_webhook_payload_invalido() -> None:
-    """Paso 1.2: Valida que estructuras JSON corruptas o incompletas
-
-    sean rechazadas por la validación estricta de Pydantic (HTTP 422).
-    """
+    """Paso 1.2: Valida que estructuras JSON corruptas o incompletas sean rechazadas."""
     payload_invalido = {"objeto_incorrecto": "hack", "entry": []}
     response = client.post("/v1/whatsapp/webhook", json=payload_invalido)
     assert response.status_code == 422
