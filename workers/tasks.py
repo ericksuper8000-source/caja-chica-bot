@@ -5,6 +5,7 @@ import asyncio
 from workers.celery_app import celery_app
 from app.config import settings
 from services.sheets_service import append_transaction_to_sheet
+from services.openai_service import transcribir_audio_whisper, parse_financial_text
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +14,10 @@ logger = logging.getLogger(__name__)
 def download_audio_task(media_id: str) -> str:
     """
     Pipeline Orquestador:
-    1. Descarga el audio desde los servidores de Meta.
-    2. [Fase 4 - Pendiente] Procesa con OpenAI Whisper y Chat API.
-    3. Persiste de forma segura en Google Sheets conectando el puente asíncrono.
+    1. Descarga el audio desde Meta.
+    2. Transcribe con Whisper.
+    3. Extrae datos financieros con GPT-4o.
+    4. Persiste en Google Sheets.
     """
     headers = {"Authorization": f"Bearer {settings.WHATSAPP_API_TOKEN}"}
     file_path = f"/tmp/caja_chica/{media_id}.ogg"
@@ -42,35 +44,35 @@ def download_audio_task(media_id: str) -> str:
         with open(file_path, "wb") as f:
             f.write(audio_content)
 
-        logger.info(f"Audio descargado con éxito en: {file_path}")
+        # ---------------------------------------------------------------------
+        # PASO B: Procesamiento IA (Transcripción + Extracción)
+        # ---------------------------------------------------------------------
+        transcripcion = asyncio.run(transcribir_audio_whisper(file_path))
+        logger.info(f"Transcripción: {transcripcion}")
+
+        # Aquí llamamos al servicio de extracción asegurando que enviamos un string
+        transaction_data = asyncio.run(parse_financial_text(transcripcion or ""))
+        logger.info(f"Datos extraídos por IA: {transaction_data}")
 
         # ---------------------------------------------------------------------
-        # PASO B: Mock del Parser de OpenAI (Estructura de la Fase 4)
+        # PASO C: Persistencia Asíncrona
         # ---------------------------------------------------------------------
-        fake_parsed_transaction = {
-            "monto": 3500,
-            "categoria": "Servicios",
-            "tipo_movimiento": "Gasto",
-            "detalle": "Prueba de Integración End-to-End Celery-Sheets",
-        }
-
-        # ---------------------------------------------------------------------
-        # PASO C: Persistencia Asíncrona en Google Sheets vía Puente asyncio
-        # ---------------------------------------------------------------------
-        success = asyncio.run(append_transaction_to_sheet(fake_parsed_transaction))
-        if success:
-            logger.info("Integración E2E completada: Fila registrada en Google Sheets.")
+        if transaction_data:
+            success = asyncio.run(append_transaction_to_sheet(transaction_data))
+            if success:
+                logger.info("Integración E2E completada: Fila registrada.")
+            else:
+                logger.error("Fallo la persistencia en Google Sheets.")
         else:
-            logger.error("Fallo la persistencia en el flujo de Celery.")
+            logger.warning("La IA no pudo extraer datos financieros del texto.")
 
         return file_path
 
     except Exception as e:
-        logger.error(f"Error crítico en el pipeline de la tarea: {e}")
+        logger.error(f"Error crítico en el pipeline: {e}")
         raise e
 
     finally:
-        # Limpieza obligatoria del archivo temporal para evitar fugas de almacenamiento
         if os.path.exists(file_path):
             os.remove(file_path)
-            logger.info(f"Archivo temporal eliminado de forma segura: {file_path}")
+            logger.info(f"Archivo temporal eliminado: {file_path}")

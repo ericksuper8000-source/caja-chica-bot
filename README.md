@@ -31,11 +31,11 @@ Metodología: **TDD estricto** (ninguna feature avanza si las pruebas no están 
 - [x] Wrapper asincrónico para Whisper + extractor financiero con GPT-4o-mini.
 - [x] Suite de 18 pruebas unitarias para modismos contables costarricenses.
 
-### 📅 Semana 3: Persistencia Física y Saneamiento
+### 📅 Semana 3: Persistencia Física, Saneamiento y Validación
 - [x] Autenticación GCP (incl. gestión segura de secretos).
-- [x] Servicio `sheets_service.py`.
-- [x] Orquestación Celery-Sheets.
-- [x] Normalización de paquetes Python (`__init__.py` en `app/core/` y `app/schemas/`).
+- [x] Servicio `sheets_service.py` y orquestación Celery-Sheets.
+- [x] Normalización de paquetes (`__init__.py`).
+- [x] **Validación de Calidad Local:** Implementación de `black`, `flake8` (configuración personalizada) y validación de suite de 19 pruebas unitarias.
 
 ---
 
@@ -52,18 +52,8 @@ Metodología: **TDD estricto** (ninguna feature avanza si las pruebas no están 
 | Seguridad Webhook & HMAC | 8h | 9h | ✅ Completado |
 | Orquestación Celery + IA | 16h | 15h | ✅ Completado |
 | Integración Sheets & Refactor | 10h | 14h | ✅ Completado |
+| Validación de Calidad y Estilo | 2h | 3h | ✅ Completado |
 | OpenAI Assistant Integration | 14h | - | ⏳ Pendiente |
-
----
-
-## 🆕 Nuevas Funcionalidades y Mejoras
-### Saneamiento de Estructura de Paquetes
-- Añadidos `__init__.py` en `app/core/` y `app/schemas/`.
-- Validación CI/CD con 19 pruebas unitarias.
-
-### Pipeline Asíncrono de Persistencia en Google Sheets
-- Transformación inmediata de JSON estructurado en filas ordenadas.
-- Tipado estricto con `mypy --strict`.
 
 ---
 
@@ -75,7 +65,7 @@ Metodología: **TDD estricto** (ninguna feature avanza si las pruebas no están 
 
 ## ✅ Calidad de Código y CI/CD
 Pipelines idénticos en GitHub Actions y GitLab CI/CD con:
-- **Black:** Formateador estricto.
-- **Ruff:** Linter de alto rendimiento.
+- **Black:** Formateador estricto aplicado.
+- **Flake8:** Linter configurado con `max-line-length = 100`.
 - **Mypy (--strict):** Validación estricta de Type Hints.
 - **Pytest:** 19 pruebas unitarias validadas (suite asincrónica).
