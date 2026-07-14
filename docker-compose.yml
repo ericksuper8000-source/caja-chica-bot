@@ -1,16 +1,16 @@
 services:
   app:
     build: .
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     env_file:
       - .env
     environment:
       - PYTHONPATH=/code
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp_key.json
     volumes:
       - .:/code
-      - C:/secrets/caja-chica-bot-prod-81dfc4656ec5.json:/code/caja-chica-bot-prod-81dfc4656ec5.json
+      - C:/secrets/caja-chica-bot-prod-81dfc4656ec5.json:/secrets/gcp_key.json:ro
     depends_on:
       - redis
       - db
@@ -22,11 +22,13 @@ services:
       - .env
     environment:
       - PYTHONPATH=/code
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp_key.json
     volumes:
       - .:/code
-      - C:/secrets/caja-chica-bot-prod-81dfc4656ec5.json:/code/caja-chica-bot-prod-81dfc4656ec5.json
+      - C:/secrets/caja-chica-bot-prod-81dfc4656ec5.json:/secrets/gcp_key.json:ro
     depends_on:
       - redis
+      - db
 
   redis:
     image: redis:7-alpine
