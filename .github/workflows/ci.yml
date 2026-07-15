@@ -6,42 +6,24 @@ on:
   pull_request:
     branches: [ main ]
 
-env:
-  LANG: "C.UTF-8"
-  LC_ALL: "C.UTF-8"
-  ENVIRONMENT: "test"
-  WHATSAPP_VERIFY_TOKEN: "mi_token_secreto_tico_123"
-  WHATSAPP_APP_SECRET: "mi_clave_secreta_de_meta_super_segura"
-
 jobs:
   quality-and-tests:
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:15-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: caja_chica_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install black ruff mypy pytest  # Aseguramos herramientas
+      - name: Run Quality Checks
+        run: |
+          black --check app/ workers/ services/ tests/
+          ruff check app/ workers/ services/ tests/
+          mypy app/ services/ workers/ tests/ --ignore-missing-imports
+          pytest tests/

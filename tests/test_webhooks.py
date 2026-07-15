@@ -1,24 +1,25 @@
 import time
 from typing import Generator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
+
 from fastapi.testclient import TestClient
 import pytest
+
+from app.core.security import validar_firma_whatsapp
 from app.main import app
 
-# Importamos la función de seguridad real para poder sobrescribirla
-from app.core.security import validar_firma_whatsapp
-
 client = TestClient(app)
+
+TEST_VERIFY_TOKEN = "mi_token_secreto_tico_123"
 
 
 @pytest.fixture(autouse=True)
 def override_security_dependency() -> Generator[AsyncMock, None, None]:
     """Inyecta un bypass automático de seguridad para los endpoints del test."""
     mock_validator = AsyncMock()
-    # Forzamos a FastAPI a usar nuestro mock en lugar de la función real
     app.dependency_overrides[validar_firma_whatsapp] = lambda: mock_validator
-    yield mock_validator
-    # Limpiamos los overrides después de cada test para no contaminar el entorno
+    with patch("app.main.TOKEN_VERIFICACION", TEST_VERIFY_TOKEN):
+        yield mock_validator
     app.dependency_overrides.clear()
 
 
