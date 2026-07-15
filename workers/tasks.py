@@ -9,12 +9,15 @@ from services.openai_service import transcribir_audio_whisper, parse_financial_t
 
 logger = logging.getLogger(__name__)
 
+
 @celery_app.task(name="workers.tasks.download_audio_task")
 def download_audio_task(media_id: str) -> str:
     # 1. Validación de seguridad antes de proceder
     token = settings.WHATSAPP_API_TOKEN
     if not token or token == "your_meta_access_token_here":
-        logger.error(f"Integración abortada: WHATSAPP_API_TOKEN no configurado correctamente para media_id: {media_id}")
+        logger.error(
+            f"Integración abortada: WHATSAPP_API_TOKEN no configurado correctamente para media_id: {media_id}"
+        )
         return "ERROR_MISSING_TOKEN"
 
     headers = {"Authorization": f"Bearer {token}"}
@@ -34,7 +37,7 @@ def download_audio_task(media_id: str) -> str:
 
             audio_response = client.get(download_url, headers=headers)
             audio_response.raise_for_status()
-            
+
             os.makedirs("/tmp/caja_chica", exist_ok=True)
             with open(file_path, "wb") as f:
                 f.write(audio_response.content)
@@ -46,7 +49,7 @@ def download_audio_task(media_id: str) -> str:
         # 4. Persistencia
         if transaction_data:
             asyncio.run(append_transaction_to_sheet(transaction_data))
-        
+
         return file_path
 
     except Exception as e:

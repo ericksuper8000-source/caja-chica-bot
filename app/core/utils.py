@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any
 
+
 def extraer_datos_audio(payload: Dict[str, Any]) -> Optional[Dict[str, str]]:
     """
     Navega el payload del webhook de WhatsApp para extraer el media_id y el teléfono.
@@ -13,11 +14,8 @@ def extraer_datos_audio(payload: Dict[str, Any]) -> Optional[Dict[str, str]]:
 
         if messages.get("type") == "audio":
             audio = messages.get("audio", {})
-            return {
-                "media_id": audio.get("id"),
-                "from_phone": messages.get("from")
-            }
+            return {"media_id": audio.get("id"), "from_phone": messages.get("from")}
     except (IndexError, KeyError, AttributeError):
         return None
-    
+
     return None
