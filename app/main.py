@@ -32,7 +32,7 @@ async def verificar_webhook(
 async def recibir_mensaje(payload: WebhookPayload):
     # 1. Intentamos extraer los datos usando nuestra utilidad
     datos_audio = extraer_datos_audio(payload.model_dump())
-    
+
     if datos_audio:
         print(f"✅ Audio detectado: {datos_audio}")
         # Despachamos la tarea a Celery
@@ -40,6 +40,6 @@ async def recibir_mensaje(payload: WebhookPayload):
         print(f"🚀 Tarea enviada a Celery para el media_id: {datos_audio['media_id']}")
     else:
         print("ℹ️ Mensaje recibido (no es audio o formato no soportado)")
-        
+
     # Retorno flexible para evitar ResponseValidationError
     return {"status": "recibido"}
