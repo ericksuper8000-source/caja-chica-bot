@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict
 import gspread
+from gspread.utils import ValueInputOption  # Importamos el enumerado para el tipado
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -11,11 +12,8 @@ logger = logging.getLogger(__name__)
 def get_sheets_client() -> gspread.Client:
     """
     Inicializa y devuelve el cliente autenticado de gspread.
-    gspread detecta automáticamente la variable de entorno
-    GOOGLE_APPLICATION_CREDENTIALS mapeada en el contenedor.
     """
     try:
-        # gspread inicializa el cliente leyendo directamente el archivo del entorno
         client = gspread.service_account(
             filename=settings.GOOGLE_APPLICATION_CREDENTIALS
         )
@@ -28,29 +26,23 @@ def get_sheets_client() -> gspread.Client:
 def _sync_append_row(spreadsheet_id: str, row_values: list) -> None:
     """
     Operación puramente síncrona que interactúa con la API de Google Sheets.
-    Se aísla en una función interna para ser ejecutada dentro de un hilo secundario.
     """
     client = get_sheets_client()
-    # Abre el documento usando el ID único del .env
     spreadsheet = client.open_by_key(spreadsheet_id)
-    # Selecciona la primera hoja de trabajo (Hoja 1 / Sheet1)
     worksheet = spreadsheet.get_worksheet(0)
-    # Inserta la fila al final de la hoja utilizando el formato por defecto de entrada del usuario
-    worksheet.append_row(row_values, value_input_option="USER_ENTERED")
+
+    # Se utiliza ValueInputOption.user_entered para cumplir con el tipado de mypy
+    worksheet.append_row(row_values, value_input_option=ValueInputOption.user_entered)
 
 
 async def append_transaction_to_sheet(transaction_data: Dict[str, Any]) -> bool:
     """
-    Inserta una nueva fila en la hoja de cálculo de Google Sheets de manera asíncrona,
-    delegando la llamada bloqueante de gspread a un hilo secundario para evitar el starvation de Celery.
+    Inserta una nueva fila en Google Sheets de manera asíncrona.
     """
     spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
 
     try:
-        # 1. Preparar la estampa de tiempo actual (Fecha y hora)
         fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # 2. Mapear y procesar la lógica contable (Gastos pasan a negativo)
         monto = transaction_data.get("monto", 0)
         tipo = transaction_data.get("tipo_movimiento", "Gasto")
 
@@ -64,8 +56,6 @@ async def append_transaction_to_sheet(transaction_data: Dict[str, Any]) -> bool:
             transaction_data.get("detalle", ""),
         ]
 
-        # 3. Delegación asíncrona a un hilo secundario no bloqueante
-        # asyncio.to_thread ejecuta la función síncrona en el ThreadPoolExecutor por defecto
         await asyncio.to_thread(_sync_append_row, spreadsheet_id, row_values)
 
         logger.info(
