@@ -30,7 +30,7 @@ def _sync_append_row(spreadsheet_id: str, row_values: list) -> None:
     client = get_sheets_client()
     spreadsheet = client.open_by_key(spreadsheet_id)
     worksheet = spreadsheet.get_worksheet(0)
-    
+
     # Se utiliza ValueInputOption.user_entered para cumplir con el tipado de mypy
     worksheet.append_row(row_values, value_input_option=ValueInputOption.user_entered)
 
