@@ -1,11 +1,16 @@
-import os
-import httpx
-import logging
 import asyncio
-from workers.celery_app import celery_app
+import logging
+import os
+
+import httpx
+
 from app.config import settings
+from services.openai_service import (
+    parse_financial_text,
+    transcribir_audio_whisper,
+)
 from services.sheets_service import append_transaction_to_sheet
-from services.openai_service import transcribir_audio_whisper, parse_financial_text
+from workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +21,9 @@ def download_audio_task(media_id: str) -> str:
     token = settings.WHATSAPP_API_TOKEN
     if not token or token == "your_meta_access_token_here":
         logger.error(
-            f"Integración abortada: WHATSAPP_API_TOKEN no configurado correctamente para media_id: {media_id}"
+            "Integración abortada: WHATSAPP_API_TOKEN no configurado"
+            " correctamente para media_id: %s",
+            media_id,
         )
         return "ERROR_MISSING_TOKEN"
 
@@ -54,7 +61,7 @@ def download_audio_task(media_id: str) -> str:
 
     except Exception as e:
         logger.error(f"Error en el pipeline: {e}")
-        raise e
+        raise
 
     finally:
         if os.path.exists(file_path):
