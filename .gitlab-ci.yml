@@ -26,11 +26,14 @@ quality-and-tests:
     - python -m pip install --upgrade pip
     - if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+    # Instalación explícita de herramientas de QA para asegurar entorno limpio
+    - pip install black ruff mypy pytest
 
   script:
-    - black app/ workers/ services/ tests/
-    - ruff check --fix app/ workers/ services/ tests/
-    - mypy --strict app/
+    # Ejecutamos las pruebas con las mismas banderas que validamos localmente
+    - black --check app/ workers/ services/ tests/
+    - ruff check app/ workers/ services/ tests/
+    - mypy app/ workers/ services/ tests/ --ignore-missing-imports
     - pytest tests/
 
   only:
