@@ -60,7 +60,7 @@ def download_audio_task(media_id: str) -> str:
             # Envío de respuesta al usuario vía WhatsApp
             asyncio.run(
                 enviar_mensaje_whatsapp(
-                    to_phone=settings.WHATSAPP_TEST_NUMBER,
+                    to_phone=settings.WHATSAPP_PHONE_NUMBER_ID,
                     mensaje=f"Transacción registrada: {transaction_data['categoria']} - ₡{transaction_data['monto']}",
                 )
             )
