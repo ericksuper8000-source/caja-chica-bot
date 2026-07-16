@@ -31,7 +31,11 @@ def test_download_audio_task_exito() -> None:
 
         with patch("workers.tasks.httpx.Client") as mock_client_class, patch(
             "workers.tasks.os.makedirs"
-        ) as mock_makedirs, patch("workers.tasks.open", create=True) as mock_open:
+        ) as mock_makedirs, patch(
+            "workers.tasks.open", create=True
+        ) as mock_open, patch(
+            "workers.tasks.enviar_mensaje_whatsapp", create=True
+        ) as _:
 
             mock_client_instance = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client_instance
