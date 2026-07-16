@@ -10,6 +10,7 @@ from services.openai_service import (
     transcribir_audio_whisper,
 )
 from services.sheets_service import append_transaction_to_sheet
+from services.whatsapp_service import enviar_mensaje_whatsapp
 from workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -53,9 +54,16 @@ def download_audio_task(media_id: str) -> str:
         transcripcion = asyncio.run(transcribir_audio_whisper(file_path))
         transaction_data = asyncio.run(parse_financial_text(transcripcion or ""))
 
-        # 4. Persistencia
+        # 4. Persistencia e Integración de Respuesta
         if transaction_data:
             asyncio.run(append_transaction_to_sheet(transaction_data))
+            # Envío de respuesta al usuario vía WhatsApp
+            asyncio.run(
+                enviar_mensaje_whatsapp(
+                    to_phone=settings.WHATSAPP_TEST_NUMBER,
+                    mensaje=f"Transacción registrada: {transaction_data['categoria']} - ₡{transaction_data['monto']}",
+                )
+            )
 
         return file_path
 
