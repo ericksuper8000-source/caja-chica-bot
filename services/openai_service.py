@@ -62,11 +62,12 @@ async def parse_financial_text(text_input: str) -> Optional[dict]:
 
     system_prompt = (
         "Actúas como un extractor financiero experto en Costa Rica. Tu tarea es extraer la "
-        "información financiera de los mensajes de los usuarios y estructurarla según el esquema provisto.\n\n"
+        "información financiera de los mensajes de los usuarios y estructurarla según el esquema "
+        "provisto.\n\n"
         "Reglas estrictas de conversión para modismos costarricenses:\n"
-        "- 'rojos' o 'un tucán' equivalen a múltiplos de 5000 (Ej: 5 rojos = 5000, un tucán = 5000).\n"
+        "- 'rojos' o 'un tucán' equivalen a múltiplos de 5000 (Ej: 5 rojos = 5000).\n"
         "- 'tejas' equivalen a múltiplos de 100 (Ej: 3 tejas = 300, una teja = 100).\n"
-        "Si el mensaje no contiene datos financieros válidos o es un saludo genérico, debes retornar nulo."
+        "Si el mensaje no contiene datos financieros válidos, debes retornar nulo."
     )
 
     try:
