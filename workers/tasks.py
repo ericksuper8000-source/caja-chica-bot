@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+
 import httpx
 
 from app.config import settings
@@ -13,6 +14,7 @@ from services.whatsapp_service import enviar_mensaje_whatsapp
 from workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
 
 @celery_app.task(name="workers.tasks.download_audio_task")
 def download_audio_task(media_id: str, sender_phone: str) -> str:

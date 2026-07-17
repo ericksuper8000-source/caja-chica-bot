@@ -46,7 +46,9 @@ def test_download_audio_task_exito() -> None:
         ) as mock_whatsapp:
 
             mock_client_instance = MagicMock()
-            mock_client_class.return_value.__enter__.return_value = mock_client_instance
+            mock_client_class.return_value.__enter__.return_value = (
+                mock_client_instance
+            )
 
             mock_response_meta = MagicMock()
             mock_response_meta.json.return_value = {
@@ -68,7 +70,9 @@ def test_download_audio_task_exito() -> None:
             # Aserciones
             assert result_path == "/tmp/caja_chica/12345.ogg"
             assert mock_client_instance.get.call_count == 2
-            mock_makedirs.assert_called_once_with("/tmp/caja_chica", exist_ok=True)
+            mock_makedirs.assert_called_once_with(
+                "/tmp/caja_chica", exist_ok=True
+            )
             mock_open.assert_called_once_with("/tmp/caja_chica/12345.ogg", "wb")
             
             # Verificamos que el mensaje se envió al número correcto

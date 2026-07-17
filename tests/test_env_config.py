@@ -1,5 +1,6 @@
 from app.config import settings
 
+
 def test_config_loading():
     print("--- Verificando carga de variables de entorno ---")
     # Verificamos si los campos tienen contenido (solo longitud, no el valor)
