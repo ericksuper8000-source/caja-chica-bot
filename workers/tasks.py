@@ -53,7 +53,7 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
         # 4. Persistencia e Integración de Respuesta
         if transaction_data:
             asyncio.run(append_transaction_to_sheet(transaction_data))
-            
+
             # Envío de respuesta al usuario que envió el audio (sender_phone)
             asyncio.run(
                 enviar_mensaje_whatsapp(
