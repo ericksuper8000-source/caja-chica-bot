@@ -4,7 +4,9 @@ from pydantic import BaseModel, Field
 from typing import Optional, Literal
 from app.config import settings
 
-_api_key = settings.OPENAI_API_KEY
+# En CI/CD no hay .env, usamos un placeholder para que el módulo pueda importarse.
+# Los tests mockean las llamadas a la API, así que la key real nunca se usa en pruebas.
+_api_key = settings.OPENAI_API_KEY or "sk-placeholder-ci-only"
 openai_client = AsyncOpenAI(api_key=_api_key)
 
 
