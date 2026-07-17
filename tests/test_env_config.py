@@ -8,10 +8,12 @@ def test_config_loading():
     phone_id_len = len(settings.WHATSAPP_PHONE_NUMBER_ID)
 
     print(
-        f"WHATSAPP_API_TOKEN cargado: {'Sí' if token_len > 0 else 'No'} (Longitud: {token_len})"
+        f"WHATSAPP_API_TOKEN cargado: {'Sí' if token_len > 0 else 'No'} "
+        f"(Longitud: {token_len})"
     )
     print(
-        f"WHATSAPP_PHONE_NUMBER_ID cargado: {'Sí' if phone_id_len > 0 else 'No'} (Longitud: {phone_id_len})"
+        f"WHATSAPP_PHONE_NUMBER_ID cargado: {'Sí' if phone_id_len > 0 else 'No'} "
+        f"(Longitud: {phone_id_len})"
     )
 
     if token_len > 0 and phone_id_len > 0:

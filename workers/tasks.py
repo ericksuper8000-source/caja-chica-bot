@@ -58,7 +58,10 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
             asyncio.run(
                 enviar_mensaje_whatsapp(
                     to_phone=sender_phone,
-                    mensaje=f"Transacción registrada: {transaction_data['categoria']} - ₡{transaction_data['monto']}",
+                    mensaje=(
+                        f"Transacción registrada: {transaction_data['categoria']} - "
+                        f"₡{transaction_data['monto']}"
+                    ),
                 )
             )
 
