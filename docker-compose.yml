@@ -10,7 +10,7 @@ services:
       - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp_key.json
     volumes:
       - .:/code
-      - C:/secrets/caja-chica-bot-prod-81dfc4656ec5.json:/secrets/gcp_key.json:ro
+      - C:\Users\XPC\Desktop\Desktop\IA\Proyectos Negocio\NEGOCIO 1\Privado\caja-chica-bot-prod-81dfc4656ec5.json:/secrets/gcp_key.json:ro
     depends_on:
       - redis
       - db
@@ -25,7 +25,7 @@ services:
       - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp_key.json
     volumes:
       - .:/code
-      - C:/secrets/caja-chica-bot-prod-81dfc4656ec5.json:/secrets/gcp_key.json:ro
+      - C:\Users\XPC\Desktop\Desktop\IA\Proyectos Negocio\NEGOCIO 1\Privado\caja-chica-bot-prod-81dfc4656ec5.json:/secrets/gcp_key.json:ro
     depends_on:
       - redis
       - db

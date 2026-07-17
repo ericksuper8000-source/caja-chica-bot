@@ -41,7 +41,7 @@ async def recibir_mensaje(payload: WebhookPayload) -> dict[str, str]:
     if datos_audio:
         logger.info(f"Audio detectado: {datos_audio}")
         # Despachamos la tarea a Celery
-        download_audio_task.delay(datos_audio["media_id"])
+        download_audio_task.delay(datos_audio["media_id"], datos_audio["from_phone"])
         logger.info(
             f"Tarea enviada a Celery para el media_id: {datos_audio['media_id']}"
         )
