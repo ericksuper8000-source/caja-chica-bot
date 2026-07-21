@@ -39,7 +39,8 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
             if not download_url:
                 raise ValueError(f"No se encontró URL para media_id: {media_id}")
 
-            audio_response = client.get(download_url, headers=headers)
+            # Se elimina headers=headers ya que la URL de descarga suele ser firmada y no requiere/acepta el token
+            audio_response = client.get(download_url)
             audio_response.raise_for_status()
 
             os.makedirs("/tmp/caja_chica", exist_ok=True)
@@ -72,7 +73,6 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
         raise
 
     finally:
-        # Comentado para permitir que las pruebas validen la existencia del archivo
-        # if os.path.exists(file_path):
-        #     os.remove(file_path)
-        pass
+        # Limpieza del archivo temporal tras procesar
+        if os.path.exists(file_path):
+            os.remove(file_path)
