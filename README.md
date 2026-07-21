@@ -29,13 +29,13 @@ Metodología: **TDD estricto** (ninguna feature avanza si las pruebas no están 
 ### 📅 Semana 2: Asincronía, IA y Suite "Test Tico"
 - [x] Configuración Celery + Redis (`download_audio_task`).
 - [x] Wrapper asincrónico para Whisper + extractor financiero con GPT-4o-mini.
-- [x] Suite de 18 pruebas unitarias para modismos contables costarricenses.
+- [x] Suite de 23 pruebas unitarias para modismos contables costarricenses.
 
 ### 📅 Semana 3: Persistencia Física, Saneamiento y Validación
 - [x] Autenticación GCP (incl. gestión segura de secretos).
 - [x] Servicio `sheets_service.py` y orquestación Celery-Sheets.
 - [x] Normalización de paquetes (`__init__.py`).
-- [x] **Validación de Calidad Local:** Implementación de `black`, `flake8` (configuración personalizada) y validación de suite de 19 pruebas unitarias.
+- [x] **Validación de Calidad Local:** Implementación de `black`, `flake8` (configuración personalizada) y validación de suite de 23 pruebas unitarias.
 
 ---
 
@@ -68,4 +68,4 @@ Pipelines idénticos en GitHub Actions y GitLab CI/CD con:
 - **Black:** Formateador estricto aplicado.
 - **Flake8:** Linter configurado con `max-line-length = 100`.
 - **Mypy (--strict):** Validación estricta de Type Hints.
-- **Pytest:** 19 pruebas unitarias validadas (suite asincrónica).
+- **Pytest:** 23 pruebas unitarias validadas (suite asincrónica).
