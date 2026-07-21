@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import logging
 import os
 
@@ -24,15 +25,11 @@ def _run_async(coro):
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            # Si ya hay un loop corriendo (raro en Celery, pero posible),
-            # creamos un nuevo hilo para ejecutar la corrutina
-            import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 return pool.submit(asyncio.run, coro).result()
         else:
             return loop.run_until_complete(coro)
     except RuntimeError:
-        # No hay event loop activo, crear uno nuevo
         return asyncio.run(coro)
 
 
@@ -59,7 +56,7 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
             if not download_url:
                 raise ValueError(f"No se encontró URL para media_id: {media_id}")
 
-            # Se elimina headers=headers ya que la URL de descarga suele ser firmada y no requiere/acepta el token
+            # La URL de descarga suele ser firmada, no requiere token
             audio_response = client.get(download_url)
             audio_response.raise_for_status()
 
