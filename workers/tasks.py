@@ -16,6 +16,26 @@ from workers.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
+def _run_async(coro):
+    """
+    Ejecuta una corrutina de forma segura dentro de un Celery task.
+    Reutiliza el event loop existente si ya está corriendo, o crea uno nuevo.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Si ya hay un loop corriendo (raro en Celery, pero posible),
+            # creamos un nuevo hilo para ejecutar la corrutina
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, coro).result()
+        else:
+            return loop.run_until_complete(coro)
+    except RuntimeError:
+        # No hay event loop activo, crear uno nuevo
+        return asyncio.run(coro)
+
+
 @celery_app.task(name="workers.tasks.download_audio_task")
 def download_audio_task(media_id: str, sender_phone: str) -> str:
     # 1. Validación de seguridad
@@ -48,15 +68,15 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
                 f.write(audio_response.content)
 
         # 3. Procesamiento IA
-        transcripcion = asyncio.run(transcribir_audio_whisper(file_path))
-        transaction_data = asyncio.run(parse_financial_text(transcripcion or ""))
+        transcripcion = _run_async(transcribir_audio_whisper(file_path))
+        transaction_data = _run_async(parse_financial_text(transcripcion or ""))
 
         # 4. Persistencia e Integración de Respuesta
         if transaction_data:
-            asyncio.run(append_transaction_to_sheet(transaction_data))
+            _run_async(append_transaction_to_sheet(transaction_data))
 
             # Envío de respuesta al usuario que envió el audio (sender_phone)
-            asyncio.run(
+            _run_async(
                 enviar_mensaje_whatsapp(
                     to_phone=sender_phone,
                     mensaje=(

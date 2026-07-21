@@ -1,5 +1,4 @@
 import os
-
 import pytest
 
 
@@ -12,3 +11,7 @@ def mock_env_vars():
     os.environ["REDIS_URL"] = "redis://localhost:6379/0"
     os.environ["ENVIRONMENT"] = "test"
     os.environ["WHATSAPP_VERIFY_TOKEN"] = "mi_token_secreto_tico_123"
+
+
+# Configuración de pytest-asyncio para evitar warnings
+pytest_plugins: list[str] = []

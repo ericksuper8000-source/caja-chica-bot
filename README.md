@@ -29,13 +29,13 @@ Metodología: **TDD estricto** (ninguna feature avanza si las pruebas no están 
 ### 📅 Semana 2: Asincronía, IA y Suite "Test Tico"
 - [x] Configuración Celery + Redis (`download_audio_task`).
 - [x] Wrapper asincrónico para Whisper + extractor financiero con GPT-4o-mini.
-- [x] Suite de 23 pruebas unitarias para modismos contables costarricenses.
+- [x] Suite de 22 pruebas unitarias para modismos contables costarricenses.
 
 ### 📅 Semana 3: Persistencia Física, Saneamiento y Validación
 - [x] Autenticación GCP (incl. gestión segura de secretos).
 - [x] Servicio `sheets_service.py` y orquestación Celery-Sheets.
 - [x] Normalización de paquetes (`__init__.py`).
-- [x] **Validación de Calidad Local:** Implementación de `black`, `flake8` (configuración personalizada) y validación de suite de 23 pruebas unitarias.
+- [x] **Validación de Calidad Local:** Implementación de `black`, `flake8` (configuración personalizada) y validación de suite de 22 pruebas unitarias.
 
 ---
 
@@ -53,13 +53,12 @@ Metodología: **TDD estricto** (ninguna feature avanza si las pruebas no están 
 | Orquestación Celery + IA | 16h | 15h | ✅ Completado |
 | Integración Sheets & Refactor | 10h | 14h | ✅ Completado |
 | Validación de Calidad y Estilo | 2h | 3h | ✅ Completado |
-| OpenAI Assistant Integration | 14h | - | ⏳ Pendiente |
 
 ---
 
 ## 🔄 Retrospectiva: ¿Qué haríamos distinto?
-- Sustituir **gspread** por API REST nativa de Google (asincronía con `httpx`).
-- Configurar `mypy.ini` con plugin `pydantic.mypy`.
+- Configurar `mypy.ini` con plugin `pydantic.mypy` desde el inicio.
+- Centralizar configuración de herramientas en `pyproject.toml` desde el inicio.
 
 ---
 
@@ -68,4 +67,4 @@ Pipelines idénticos en GitHub Actions y GitLab CI/CD con:
 - **Black:** Formateador estricto aplicado.
 - **Flake8:** Linter configurado con `max-line-length = 100`.
 - **Mypy (--strict):** Validación estricta de Type Hints.
-- **Pytest:** 23 pruebas unitarias validadas (suite asincrónica).
+- **Pytest:** 22 pruebas unitarias validadas (suite asincrónica).
