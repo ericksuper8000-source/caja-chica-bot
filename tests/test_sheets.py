@@ -18,7 +18,7 @@ def test_get_sheets_client_success(mock_service_account):
     assert client == mock_client_instance
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @patch("services.sheets_service.get_sheets_client")
 async def test_append_transaction_gasto_success(mock_get_sheets_client):
     """Prueba la inserción exitosa de un Gasto transformando el monto a negativo."""
@@ -55,7 +55,7 @@ async def test_append_transaction_gasto_success(mock_get_sheets_client):
     assert called_args[3] == "Almuerzo ejecutivo"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @patch("services.sheets_service.get_sheets_client")
 async def test_append_transaction_api_error(mock_get_sheets_client):
     """Prueba que el servicio maneje limpiamente un error de API (APIError) de gspread."""
