@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import logging
 import os
 
@@ -14,6 +15,22 @@ from services.whatsapp_service import enviar_mensaje_whatsapp
 from workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+def _run_async(coro):
+    """
+    Ejecuta una corrutina de forma segura dentro de un Celery task.
+    Reutiliza el event loop existente si ya está corriendo, o crea uno nuevo.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, coro).result()
+        else:
+            return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
 
 
 @celery_app.task(name="workers.tasks.download_audio_task")
@@ -39,7 +56,7 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
             if not download_url:
                 raise ValueError(f"No se encontró URL para media_id: {media_id}")
 
-            # Se elimina headers=headers ya que la URL de descarga suele ser firmada y no requiere/acepta el token
+            # La URL de descarga suele ser firmada, no requiere token
             audio_response = client.get(download_url)
             audio_response.raise_for_status()
 
@@ -48,15 +65,15 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
                 f.write(audio_response.content)
 
         # 3. Procesamiento IA
-        transcripcion = asyncio.run(transcribir_audio_whisper(file_path))
-        transaction_data = asyncio.run(parse_financial_text(transcripcion or ""))
+        transcripcion = _run_async(transcribir_audio_whisper(file_path))
+        transaction_data = _run_async(parse_financial_text(transcripcion or ""))
 
         # 4. Persistencia e Integración de Respuesta
         if transaction_data:
-            asyncio.run(append_transaction_to_sheet(transaction_data))
+            _run_async(append_transaction_to_sheet(transaction_data))
 
             # Envío de respuesta al usuario que envió el audio (sender_phone)
-            asyncio.run(
+            _run_async(
                 enviar_mensaje_whatsapp(
                     to_phone=sender_phone,
                     mensaje=(
