@@ -29,9 +29,7 @@ async def enviar_mensaje_whatsapp(to_phone: str, mensaje: str) -> bool:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
 
-            logger.info(
-                f"Mensaje enviado con éxito a {to_phone}. Respuesta: {response.json()}"
-            )
+            logger.info(f"Mensaje enviado con éxito a {to_phone}.")
             return True
 
     except Exception as e:
