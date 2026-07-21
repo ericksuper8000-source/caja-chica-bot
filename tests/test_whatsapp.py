@@ -3,7 +3,7 @@ from unittest.mock import patch, AsyncMock
 from services.whatsapp_service import enviar_mensaje_whatsapp
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_enviar_mensaje_whatsapp_exitoso():
     """Valida que la función maneja correctamente una respuesta exitosa."""
     # Creamos un mock para la respuesta del cliente
