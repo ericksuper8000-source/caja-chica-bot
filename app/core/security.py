@@ -23,7 +23,7 @@ async def validar_firma_whatsapp(
     body_bytes = await request.body()
 
     expected_signature = hmac.new(
-        key=APP_SECRET.encode("utf-8"), msg=body_bytes, digestmod=hashlib.sha256
+        APP_SECRET.encode("utf-8"), body_bytes, hashlib.sha256
     ).hexdigest()
 
     if not hmac.compare_digest(expected_signature, actual_signature):

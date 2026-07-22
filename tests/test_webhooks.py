@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import json
 import time
 from typing import Generator
 from unittest.mock import AsyncMock, patch
@@ -88,3 +91,85 @@ def test_recibir_mensaje_webhook_payload_invalido() -> None:
     payload_invalido = {"objeto_incorrecto": "hack", "entry": []}
     response = client.post("/v1/whatsapp/webhook", json=payload_invalido)
     assert response.status_code == 422
+
+
+TEST_APP_SECRET = "test_hmac_secret_key_123"
+
+
+def test_recibir_mensaje_firma_hmac_valida() -> None:
+    """Valida que firma HMAC-SHA256 correcta permite acceso al endpoint."""
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "1234567890",
+                "changes": [
+                    {
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {},
+                        },
+                        "field": "messages",
+                    }
+                ],
+            }
+        ],
+    }
+
+    payload_bytes = json.dumps(payload).encode("utf-8")
+    firma = hmac.new(
+        TEST_APP_SECRET.encode("utf-8"), payload_bytes, hashlib.sha256
+    ).hexdigest()
+
+    app.dependency_overrides.clear()
+
+    with patch("app.core.security.APP_SECRET", TEST_APP_SECRET):
+        response = client.post(
+            "/v1/whatsapp/webhook",
+            content=payload_bytes,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": f"sha256={firma}",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "recibido"}
+
+
+def test_recibir_mensaje_firma_hmac_invalida() -> None:
+    """Valida que firma HMAC incorrecta retorna HTTP 403."""
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "1234567890",
+                "changes": [
+                    {
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {},
+                        },
+                        "field": "messages",
+                    }
+                ],
+            }
+        ],
+    }
+
+    payload_bytes = json.dumps(payload).encode("utf-8")
+    firma_incorrecta = "a" * 64
+
+    app.dependency_overrides.clear()
+
+    with patch("app.core.security.APP_SECRET", TEST_APP_SECRET):
+        response = client.post(
+            "/v1/whatsapp/webhook",
+            content=payload_bytes,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": f"sha256={firma_incorrecta}",
+            },
+        )
+
+    assert response.status_code == 403
