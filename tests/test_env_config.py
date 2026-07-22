@@ -1,26 +1,13 @@
-from app.config import settings
+import os
+import pytest
+from app.config import Settings
 
 
-def test_config_loading():
-    print("--- Verificando carga de variables de entorno ---")
-    # Verificamos si los campos tienen contenido (solo longitud, no el valor)
-    token_len = len(settings.WHATSAPP_API_TOKEN)
-    phone_id_len = len(settings.WHATSAPP_PHONE_NUMBER_ID)
-
-    print(
-        f"WHATSAPP_API_TOKEN cargado: {'Sí' if token_len > 0 else 'No'} "
-        f"(Longitud: {token_len})"
-    )
-    print(
-        f"WHATSAPP_PHONE_NUMBER_ID cargado: {'Sí' if phone_id_len > 0 else 'No'} "
-        f"(Longitud: {phone_id_len})"
-    )
-
-    if token_len > 0 and phone_id_len > 0:
-        print("¡ÉXITO! Las variables de WhatsApp fueron cargadas correctamente.")
-    else:
-        print("ERROR: Alguna variable no se cargó. Revisa tu archivo .env.")
-
-
-if __name__ == "__main__":
-    test_config_loading()
+def test_config_loading() -> None:
+    if os.getenv("ENVIRONMENT") == "test":
+        pytest.skip("Requiere .env real con credenciales de WhatsApp")
+    settings = Settings()
+    assert settings.WHATSAPP_API_TOKEN != "", "WHATSAPP_API_TOKEN no está configurado"
+    assert (
+        settings.WHATSAPP_PHONE_NUMBER_ID != ""
+    ), "WHATSAPP_PHONE_NUMBER_ID no está configurado"

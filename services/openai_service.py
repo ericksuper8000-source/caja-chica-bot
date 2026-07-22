@@ -65,8 +65,10 @@ async def parse_financial_text(text_input: str) -> Optional[dict]:
         "información financiera de los mensajes de los usuarios y estructurarla según el esquema "
         "provisto.\n\n"
         "Reglas estrictas de conversión para modismos costarricenses:\n"
-        "- 'rojos' o 'un tucán' equivalen a múltiplos de 5000 (Ej: 5 rojos = 5000).\n"
-        "- 'tejas' equivalen a múltiplos de 100 (Ej: 3 tejas = 300, una teja = 100).\n"
+        "- 'rojo' = ₡1,000 colones (Ej: 5 rojos = 5000, 10 rojos = 10000).\n"
+        "- 'tucán' = ₡5,000 colones.\n"
+        "- 'teja' = ₡100 colones (Ej: 5 tejas = 500).\n"
+        "- 'teja larga' = ₡100,000 colones.\n"
         "Si el mensaje no contiene datos financieros válidos, debes retornar nulo."
     )
 
