@@ -3,11 +3,9 @@ import pytest
 from app.config import Settings
 
 
-@pytest.mark.skipif(
-    os.getenv("ENVIRONMENT") == "test",
-    reason="Requiere .env real con credenciales de WhatsApp",
-)
 def test_config_loading() -> None:
+    if os.getenv("ENVIRONMENT") == "test":
+        pytest.skip("Requiere .env real con credenciales de WhatsApp")
     settings = Settings()
     assert settings.WHATSAPP_API_TOKEN != "", "WHATSAPP_API_TOKEN no está configurado"
     assert (
