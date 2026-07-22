@@ -1,7 +1,6 @@
 import hashlib
 import hmac
 
-
 SECRET_TEST = "test_secret_clave_123"
 
 
@@ -14,9 +13,7 @@ def test_hmac_firma_se_calcula_correctamente() -> None:
         b'"from": "123456789"}]}}]}]}'
     )
 
-    firma = hmac.new(
-        SECRET_TEST.encode("utf-8"), payload, hashlib.sha256
-    ).hexdigest()
+    firma = hmac.new(SECRET_TEST.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
     assert len(firma) == 64
     assert all(c in "0123456789abcdef" for c in firma)
@@ -26,12 +23,8 @@ def test_hmac_firma_es_determinista() -> None:
     """Valida que los mismos inputs producen la misma firma."""
     payload = b'{"dato": "test"}'
 
-    firma_a = hmac.new(
-        SECRET_TEST.encode("utf-8"), payload, hashlib.sha256
-    ).hexdigest()
-    firma_b = hmac.new(
-        SECRET_TEST.encode("utf-8"), payload, hashlib.sha256
-    ).hexdigest()
+    firma_a = hmac.new(SECRET_TEST.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    firma_b = hmac.new(SECRET_TEST.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
     assert firma_a == firma_b
 
