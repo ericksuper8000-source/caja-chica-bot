@@ -139,9 +139,7 @@ def test_download_audio_task_whisper_no_rompe_flujo_exitoso() -> None:
     """Valida que el flujo exitoso sigue funcionando como antes."""
     with (
         patch("workers.tasks.transcribir_audio_whisper", return_value="texto"),
-        patch(
-            "workers.tasks.parse_financial_text", return_value={"categoria": "A", "monto": "100"}
-        ),
+        patch("workers.tasks.parse_financial_text", return_value={"categoria": "A", "monto": 100}),
         patch("workers.tasks.append_transaction_to_sheet"),
         patch("workers.tasks.enviar_mensaje_whatsapp"),
         patch("workers.tasks.httpx.Client"),
