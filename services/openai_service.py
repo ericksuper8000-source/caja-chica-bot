@@ -1,5 +1,5 @@
 import os
-from typing import Literal
+from typing import Any, Literal
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
@@ -52,7 +52,7 @@ async def transcribir_audio_whisper(file_path: str) -> str | None:
 # ==========================================
 # 3. SERVICIO DE EXTRACCIÓN ESTRUCTURADA - PASO 2.5
 # ==========================================
-async def parse_financial_text(text_input: str) -> dict | None:
+async def parse_financial_text(text_input: str) -> dict[str, Any] | None:
     """
     Procesa una entrada de texto utilizando GPT-4o-mini y Structured Outputs.
     Traduce los modismos costarricenses (ej: rojos, tejas, tucanes) a valores enteros.
