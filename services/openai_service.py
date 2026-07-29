@@ -43,7 +43,7 @@ async def transcribir_audio_whisper(file_path: str) -> str | None:
             transcript = await openai_client.audio.transcriptions.create(
                 model="whisper-1", file=audio_file, language="es"
             )
-            return transcript.text
+            return transcript.text  # type: ignore[no-any-return]
     except Exception as e:
         print(f"Error en la capa de transcripción Whisper: {e!s}")
         return None
@@ -86,7 +86,7 @@ async def parse_financial_text(text_input: str) -> dict[str, Any] | None:
         if parsed_message:
             if isinstance(parsed_message, dict):
                 return parsed_message
-            return parsed_message.model_dump()
+            return parsed_message.model_dump()  # type: ignore[no-any-return]
         return None
 
     except Exception as e:
