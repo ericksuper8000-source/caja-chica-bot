@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
 import gspread
+import pytest
+
 from services.sheets_service import append_transaction_to_sheet, get_sheets_client
 
 

@@ -1,9 +1,11 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
+
 import gspread
 from gspread.utils import ValueInputOption  # Importamos el enumerado para el tipado
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -35,7 +37,7 @@ def _sync_append_row(spreadsheet_id: str, row_values: list) -> None:
     worksheet.append_row(row_values, value_input_option=ValueInputOption.user_entered)
 
 
-async def append_transaction_to_sheet(transaction_data: Dict[str, Any]) -> bool:
+async def append_transaction_to_sheet(transaction_data: dict[str, Any]) -> bool:
     """
     Inserta una nueva fila en Google Sheets de manera asíncrona.
     """
