@@ -28,10 +28,17 @@ def override_security_dependency() -> Generator[AsyncMock, None, None]:
 
 def test_environment_health() -> None:
     """Paso 0.6: Verifica que el endpoint de sanidad responda correctamente."""
-    response = client.get("/health")
+    mock_redis = AsyncMock()
+    mock_redis.ping = AsyncMock()
+    mock_redis.aclose = AsyncMock()
+
+    with (
+        patch("app.main.aioredis.from_url", return_value=mock_redis),
+        patch("app.main.celery_app.control.ping", return_value=[{"worker1": "ok"}]),
+    ):
+        response = client.get("/health")
     assert response.status_code == 200
-    # Corregido: el endpoint devuelve {"status": "healthy"}
-    assert response.json() == {"status": "healthy"}
+    assert response.json() == {"redis": "ok", "celery": "ok", "status": "healthy"}
 
 
 def test_verificar_webhook_handshake_exitoso() -> None:
