@@ -1,6 +1,10 @@
 import os
 import sys
+import tempfile
 from unittest.mock import MagicMock, patch
+
+EXPECTED_DIR = os.path.join(tempfile.gettempdir(), "caja_chica")
+EXPECTED_PATH = os.path.join(EXPECTED_DIR, "12345.ogg")
 
 
 def test_download_audio_task_exito() -> None:
@@ -40,7 +44,7 @@ def test_download_audio_task_exito() -> None:
                 "workers.tasks.parse_financial_text",
                 return_value={
                     "categoria": "comida",
-                    "monto": "5000",
+                    "monto": 5000,
                 },
             ),
             patch("workers.tasks.append_transaction_to_sheet"),
@@ -66,10 +70,10 @@ def test_download_audio_task_exito() -> None:
             result_path = download_audio_task("12345", test_sender)
 
             # Aserciones
-            assert result_path == "/tmp/caja_chica/12345.ogg"
+            assert result_path == EXPECTED_PATH
             assert mock_client_instance.get.call_count == 2
-            mock_makedirs.assert_called_once_with("/tmp/caja_chica", exist_ok=True)
-            mock_open.assert_called_once_with("/tmp/caja_chica/12345.ogg", "wb")
+            mock_makedirs.assert_called_once_with(EXPECTED_DIR, exist_ok=True)
+            mock_open.assert_called_once_with(EXPECTED_PATH, "wb")
 
             # Verificamos que el mensaje se envió al número correcto
             mock_whatsapp.assert_called_once()
@@ -94,7 +98,7 @@ def test_download_audio_task_whisper_falla() -> None:
         result = download_audio_task("12345", "50688888888")
 
         # Aserciones
-        assert result == "/tmp/caja_chica/12345.ogg"
+        assert result == EXPECTED_PATH
         mock_whatsapp.assert_called_with(
             to_phone="50688888888",
             mensaje="No entendí el audio. Por favor, intentá de nuevo con más claridad.",
@@ -120,7 +124,7 @@ def test_download_audio_task_parse_falla() -> None:
         result = download_audio_task("12345", "50688888888")
 
         # Aserciones
-        assert result == "/tmp/caja_chica/12345.ogg"
+        assert result == EXPECTED_PATH
         mock_whatsapp.assert_called_with(
             to_phone="50688888888",
             mensaje=(
@@ -148,4 +152,4 @@ def test_download_audio_task_whisper_no_rompe_flujo_exitoso() -> None:
         from workers.tasks import download_audio_task
 
         result = download_audio_task("12345", "50688888888")
-        assert result == "/tmp/caja_chica/12345.ogg"
+        assert result == EXPECTED_PATH
