@@ -3,8 +3,6 @@ import asyncio
 import logging
 import os
 import tempfile
-from collections.abc import Coroutine
-from typing import Any
 
 import httpx
 
@@ -20,13 +18,41 @@ from workers.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-def _run_async(coro: Coroutine[Any, Any, Any]) -> Any:
-    return asyncio.run(coro)
+async def _procesar_pipeline(file_path: str, sender_phone: str) -> str:
+    transcripcion = await transcribir_audio_whisper(file_path)
+
+    if not transcripcion:
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone,
+            mensaje="No entendí el audio. Por favor, intentá de nuevo con más claridad.",
+        )
+        return file_path
+
+    transaction_data = await parse_financial_text(transcripcion)
+
+    if not transaction_data:
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone,
+            mensaje=(
+                "No encontré datos financieros en tu mensaje. Intentá de nuevo "
+                "indicando monto, categoría y si es gasto o ingreso."
+            ),
+        )
+        return file_path
+
+    await append_transaction_to_sheet(transaction_data)
+    await enviar_mensaje_whatsapp(
+        to_phone=sender_phone,
+        mensaje=(
+            f"Transacción registrada: {transaction_data['categoria']} - "
+            f"₡{transaction_data['monto']}"
+        ),
+    )
+    return file_path
 
 
 @celery_app.task(name="workers.tasks.download_audio_task")  # type: ignore[untyped-decorator]
 def download_audio_task(media_id: str, sender_phone: str) -> str:
-    # 1. Validación de seguridad
     token = settings.WHATSAPP_API_TOKEN
     if not token:
         logger.error("Integración abortada: WHATSAPP_API_TOKEN no configurado.")
@@ -37,7 +63,6 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
     file_path = os.path.join(temp_dir, f"{media_id}.ogg")
 
     try:
-        # 2. Descarga del binario
         with httpx.Client() as client:
             meta_url = f"https://graph.facebook.com/v18.0/{media_id}"
             response = client.get(meta_url, headers=headers)
@@ -48,7 +73,6 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
             if not download_url:
                 raise ValueError(f"No se encontró URL para media_id: {media_id}")
 
-            # La URL de descarga suele ser firmada, no requiere token
             audio_response = client.get(download_url)
             audio_response.raise_for_status()
 
@@ -56,46 +80,7 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
             with open(file_path, "wb") as f:
                 f.write(audio_response.content)
 
-        # 3. Procesamiento IA
-        transcripcion = _run_async(transcribir_audio_whisper(file_path))
-
-        if not transcripcion:
-            _run_async(
-                enviar_mensaje_whatsapp(
-                    to_phone=sender_phone,
-                    mensaje="No entendí el audio. Por favor, intentá de nuevo con más claridad.",
-                )
-            )
-            return file_path
-
-        transaction_data = _run_async(parse_financial_text(transcripcion))
-
-        # 4. Persistencia e Integración de Respuesta
-        if not transaction_data:
-            _run_async(
-                enviar_mensaje_whatsapp(
-                    to_phone=sender_phone,
-                    mensaje=(
-                        "No encontré datos financieros en tu mensaje. Intentá de nuevo "
-                        "indicando monto, categoría y si es gasto o ingreso."
-                    ),
-                )
-            )
-            return file_path
-
-        # Caso de éxito
-        _run_async(append_transaction_to_sheet(transaction_data))
-        _run_async(
-            enviar_mensaje_whatsapp(
-                to_phone=sender_phone,
-                mensaje=(
-                    f"Transacción registrada: {transaction_data['categoria']} - "
-                    f"₡{transaction_data['monto']}"
-                ),
-            )
-        )
-
-        return file_path
+        return asyncio.run(_procesar_pipeline(file_path, sender_phone))
 
     except Exception as e:
         logger.error(f"Error en el pipeline: {e}")
