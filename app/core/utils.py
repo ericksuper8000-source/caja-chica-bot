@@ -14,7 +14,11 @@ def extraer_datos_audio(payload: dict[str, Any]) -> dict[str, str] | None:
 
         if messages.get("type") == "audio":
             audio = messages.get("audio", {})
-            return {"media_id": audio.get("id"), "from_phone": messages.get("from")}
+            media_id = audio.get("id")
+            from_phone = messages.get("from")
+            if media_id and from_phone:
+                return {"media_id": media_id, "from_phone": from_phone}
+            return None
     except (IndexError, KeyError, AttributeError):
         return None
 
