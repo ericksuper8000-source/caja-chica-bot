@@ -2,32 +2,16 @@ stages:
   - quality-and-tests
 
 variables:
-  LANG: "C.UTF-8"
-  LC_ALL: "C.UTF-8"
-  POSTGRES_DB: "caja_chica_db"
-  POSTGRES_USER: "postgres"
-  POSTGRES_PASSWORD: "password"
-  POSTGRES_HOST_AUTH_METHOD: "trust"
   ENVIRONMENT: "test"
-  WHATSAPP_VERIFY_TOKEN: "***REDACTED_VERIFY_TOKEN***"
-  WHATSAPP_APP_SECRET: "mi_clave_secreta_de_meta_super_segura"
 
 quality-and-tests:
   stage: quality-and-tests
   image: python:3.12
-  
-  services:
-    - name: postgres:15-alpine
-      alias: postgres
-    - name: redis:7-alpine
-      alias: redis
 
   before_script:
     - python -m pip install --upgrade pip
     - if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-    # Instalación explícita de herramientas de QA para asegurar entorno limpio
-    - pip install black ruff mypy pytest
 
   script:
     # Ejecutamos las pruebas con las mismas banderas que validamos localmente
