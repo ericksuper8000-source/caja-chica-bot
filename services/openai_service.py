@@ -16,9 +16,7 @@ openai_client = AsyncOpenAI(api_key=_api_key)
 # 1. ESQUEMAS DE ENTORNO Y MODELOS ESTRUCTURADOS
 # ==========================================
 class TransactionResponse(BaseModel):
-    monto: int = Field(
-        description="Monto numérico exacto de la transacción financiera."
-    )
+    monto: int = Field(description="Monto numérico exacto de la transacción financiera.")
     categoria: str = Field(
         description="Categoría del movimiento (ej: Alimentación, Transporte, Servicios)."
     )

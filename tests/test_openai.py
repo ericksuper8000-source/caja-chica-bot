@@ -10,9 +10,10 @@ async def test_transcribir_audio_whisper_exito() -> None:
     """Valida que la función transcribir_audio_whisper lea el archivo local
     y devuelva el texto de forma correcta utilizando el cliente asíncrono.
     """
-    with patch("services.openai_service.os.path.exists", return_value=True), patch(
-        "services.openai_service.open", create=True
-    ) as mock_open:
+    with (
+        patch("services.openai_service.os.path.exists", return_value=True),
+        patch("services.openai_service.open", create=True) as mock_open,
+    ):
 
         mock_file_instance = MagicMock()
         mock_open.return_value.__enter__.return_value = mock_file_instance
@@ -30,10 +31,7 @@ async def test_transcribir_audio_whisper_exito() -> None:
             mock_create,
         ):
             resultado = await transcribir_audio_whisper("/tmp/test_audio.ogg")
-            assert (
-                resultado
-                == "Mae, gasté 5 rojos en gasolina para el pickup de la empresa"
-            )
+            assert resultado == "Mae, gasté 5 rojos en gasolina para el pickup de la empresa"
 
 
 @pytest.mark.anyio
