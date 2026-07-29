@@ -10,14 +10,20 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+_sheets_client: Any = None
+
 
 def get_sheets_client() -> Any:
     """
     Inicializa y devuelve el cliente autenticado de gspread.
+    Reusa el cliente si ya fue creado para evitar múltiples autenticaciones.
     """
+    global _sheets_client
+    if _sheets_client is not None:
+        return _sheets_client
     try:
-        client = gspread.service_account(filename=settings.GOOGLE_APPLICATION_CREDENTIALS)  # type: ignore[attr-defined]
-        return client
+        _sheets_client = gspread.service_account(filename=settings.GOOGLE_APPLICATION_CREDENTIALS)  # type: ignore[attr-defined]
+        return _sheets_client
     except Exception as e:
         logger.error(f"Error crítico al autenticar con gspread: {e}")
         raise e
