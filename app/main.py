@@ -1,8 +1,11 @@
 import logging
 
 import redis.asyncio as aioredis
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.core.security import validar_firma_whatsapp
@@ -13,7 +16,11 @@ from workers.tasks import download_audio_task
 
 logger = logging.getLogger(__name__)
 
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(title="Caja Chica Bot API", version="0.1.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 TOKEN_VERIFICACION = settings.WHATSAPP_VERIFY_TOKEN
 
@@ -63,8 +70,9 @@ async def verificar_webhook(
     raise HTTPException(status_code=403, detail="Token de verificación inválido")
 
 
+@limiter.limit("1000/minute" if settings.ENVIRONMENT == "test" else "10/minute")
 @app.post("/v1/whatsapp/webhook", dependencies=[Depends(validar_firma_whatsapp)])  # type: ignore[untyped-decorator]
-async def recibir_mensaje(payload: WebhookPayload) -> dict[str, str]:
+async def recibir_mensaje(request: Request, payload: WebhookPayload) -> dict[str, str]:
     # 1. Intentamos extraer los datos usando nuestra utilidad
     datos_audio = extraer_datos_audio(payload.model_dump(by_alias=True))
 
