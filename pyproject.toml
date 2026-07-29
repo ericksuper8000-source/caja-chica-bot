@@ -25,6 +25,8 @@ warn_unused_ignores = false
 ignore_missing_imports = true
 plugins = ["pydantic.mypy"]
 exclude = ["tests/"]
+# Se añade esta línea para solucionar el error de los decoradores de FastAPI
+disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
