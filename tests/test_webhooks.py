@@ -2,11 +2,11 @@ import hashlib
 import hmac
 import json
 import time
-from typing import Generator
+from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from app.core.security import validar_firma_whatsapp
 from app.main import app

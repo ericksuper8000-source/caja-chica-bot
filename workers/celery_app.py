@@ -1,4 +1,5 @@
 from celery import Celery
+
 from app.config import settings
 
 # Inicializamos la aplicación de Celery asignándole un nombre identificable
