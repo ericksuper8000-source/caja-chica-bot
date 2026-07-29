@@ -36,7 +36,7 @@ async def verificar_webhook(
 @app.post("/v1/whatsapp/webhook", dependencies=[Depends(validar_firma_whatsapp)])  # type: ignore[untyped-decorator]
 async def recibir_mensaje(payload: WebhookPayload) -> dict[str, str]:
     # 1. Intentamos extraer los datos usando nuestra utilidad
-    datos_audio = extraer_datos_audio(payload.model_dump())
+    datos_audio = extraer_datos_audio(payload.model_dump(by_alias=True))
 
     if datos_audio:
         logger.info(f"Audio detectado: {datos_audio}")
