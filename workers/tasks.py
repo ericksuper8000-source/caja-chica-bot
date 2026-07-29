@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import asyncio
-import concurrent.futures
 import logging
 import os
 from collections.abc import Coroutine
@@ -21,19 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _run_async(coro: Coroutine[Any, Any, Any]) -> Any:
-    """
-    Ejecuta una corrutina de forma segura dentro de un Celery task.
-    Reutiliza el event loop existente si ya está corriendo, o crea uno nuevo.
-    """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, coro).result()
-        else:
-            return loop.run_until_complete(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
+    return asyncio.run(coro)
 
 
 @celery_app.task(name="workers.tasks.download_audio_task")  # type: ignore[untyped-decorator]
