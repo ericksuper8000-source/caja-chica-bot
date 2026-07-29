@@ -1,5 +1,6 @@
 import logging
 
+import redis.asyncio as aioredis
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
@@ -7,6 +8,7 @@ from app.config import settings
 from app.core.security import validar_firma_whatsapp
 from app.core.utils import extraer_datos_audio
 from app.schemas.whatsapp import WebhookPayload
+from workers.celery_app import celery_app
 from workers.tasks import download_audio_task
 
 logger = logging.getLogger(__name__)
@@ -18,7 +20,35 @@ TOKEN_VERIFICACION = settings.WHATSAPP_VERIFY_TOKEN
 
 @app.get("/health")  # type: ignore[untyped-decorator]
 async def health_check() -> dict[str, str]:
-    return {"status": "healthy"}
+    statuses: dict[str, str] = {}
+
+    # Redis health check
+    try:
+        r = aioredis.from_url(settings.REDIS_URL, socket_connect_timeout=3)  # type: ignore[no-untyped-call]
+        await r.ping()
+        await r.aclose()
+        statuses["redis"] = "ok"
+    except Exception as e:
+        logger.error("Health check — Redis: %s", e)
+        statuses["redis"] = "error"
+
+    # Celery worker health check
+    try:
+        workers = celery_app.control.ping(timeout=3)
+        if workers:
+            statuses["celery"] = "ok"
+        else:
+            statuses["celery"] = "no_workers"
+    except Exception as e:
+        logger.error("Health check — Celery: %s", e)
+        statuses["celery"] = "error"
+
+    overall = all(v == "ok" for v in statuses.values())
+    statuses["status"] = "healthy" if overall else "degraded"
+
+    if not overall:
+        raise HTTPException(status_code=503, detail=statuses)
+    return statuses
 
 
 @app.get("/v1/whatsapp/webhook", response_class=PlainTextResponse)  # type: ignore[untyped-decorator]

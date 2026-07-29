@@ -102,6 +102,8 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
         raise
 
     finally:
-        # Limpieza del archivo temporal tras procesar
         if os.path.exists(file_path):
-            os.remove(file_path)
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
