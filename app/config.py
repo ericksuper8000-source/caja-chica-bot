@@ -5,7 +5,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
+class Settings(BaseSettings):  # type: ignore[misc]
     # Ya no forzamos una lógica compleja aquí.
     # Dejamos env_file en None por defecto para máxima seguridad en tests.
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
