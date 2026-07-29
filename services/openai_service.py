@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any, Literal
 
@@ -5,6 +6,8 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 # En CI/CD no hay .env, usamos un placeholder para que el módulo pueda importarse.
 # Los tests mockean las llamadas a la API, así que la key real nunca se usa en pruebas.
@@ -35,7 +38,7 @@ async def transcribir_audio_whisper(file_path: str) -> str | None:
     a través de OpenAI Whisper API y retorna la transcripción adaptada al acento tico.
     """
     if not os.path.exists(file_path):
-        print(f"Error: El archivo de audio no existe en la ruta {file_path}")
+        logger.error("El archivo de audio no existe en la ruta %s", file_path)
         return None
 
     try:
@@ -45,7 +48,7 @@ async def transcribir_audio_whisper(file_path: str) -> str | None:
             )
             return transcript.text  # type: ignore[no-any-return]
     except Exception as e:
-        print(f"Error en la capa de transcripción Whisper: {e!s}")
+        logger.error("Error en la capa de transcripción Whisper: %s", e)
         return None
 
 
@@ -90,5 +93,5 @@ async def parse_financial_text(text_input: str) -> dict[str, Any] | None:
         return None
 
     except Exception as e:
-        print(f"Error procesando Structured Outputs con OpenAI: {e!s}")
+        logger.error("Error procesando Structured Outputs con OpenAI: %s", e)
         return None
