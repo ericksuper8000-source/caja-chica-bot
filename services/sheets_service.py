@@ -11,19 +11,19 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-def get_sheets_client() -> gspread.Client:
+def get_sheets_client() -> Any:
     """
     Inicializa y devuelve el cliente autenticado de gspread.
     """
     try:
-        client = gspread.service_account(filename=settings.GOOGLE_APPLICATION_CREDENTIALS)
+        client = gspread.service_account(filename=settings.GOOGLE_APPLICATION_CREDENTIALS)  # type: ignore[attr-defined]
         return client
     except Exception as e:
         logger.error(f"Error crítico al autenticar con gspread: {e}")
         raise e
 
 
-def _sync_append_row(spreadsheet_id: str, row_values: list) -> None:
+def _sync_append_row(spreadsheet_id: str, row_values: list[Any]) -> None:
     """
     Operación puramente síncrona que interactúa con la API de Google Sheets.
     """

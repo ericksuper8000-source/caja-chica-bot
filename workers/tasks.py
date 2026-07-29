@@ -3,7 +3,7 @@ import asyncio
 import concurrent.futures
 import logging
 import os
-from collections.abc import Awaitable
+from collections.abc import Coroutine
 from typing import Any
 
 import httpx
@@ -20,7 +20,7 @@ from workers.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-def _run_async(coro: Awaitable[Any]) -> Any:
+def _run_async(coro: Coroutine[Any, Any, Any]) -> Any:
     """
     Ejecuta una corrutina de forma segura dentro de un Celery task.
     Reutiliza el event loop existente si ya está corriendo, o crea uno nuevo.
@@ -36,7 +36,7 @@ def _run_async(coro: Awaitable[Any]) -> Any:
         return asyncio.run(coro)
 
 
-@celery_app.task(name="workers.tasks.download_audio_task")
+@celery_app.task(name="workers.tasks.download_audio_task")  # type: ignore[untyped-decorator]
 def download_audio_task(media_id: str, sender_phone: str) -> str:
     # 1. Validación de seguridad
     token = settings.WHATSAPP_API_TOKEN
