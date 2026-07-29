@@ -16,7 +16,7 @@ def get_sheets_client() -> Any:
     Inicializa y devuelve el cliente autenticado de gspread.
     """
     try:
-        client = gspread.service_account(filename=settings.GOOGLE_APPLICATION_CREDENTIALS)  # type: ignore[attr-defined]
+        client = gspread.service_account(filename=settings.GOOGLE_APPLICATION_CREDENTIALS)
         return client
     except Exception as e:
         logger.error(f"Error crítico al autenticar con gspread: {e}")

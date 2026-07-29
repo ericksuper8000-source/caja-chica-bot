@@ -35,15 +35,15 @@ def test_download_audio_task_exito() -> None:
             patch(
                 "workers.tasks.transcribir_audio_whisper",
                 return_value="transcripcion de prueba",
-            ) as _,
+            ),
             patch(
                 "workers.tasks.parse_financial_text",
                 return_value={
                     "categoria": "comida",
                     "monto": "5000",
                 },
-            ) as _,
-            patch("workers.tasks.append_transaction_to_sheet") as _,
+            ),
+            patch("workers.tasks.append_transaction_to_sheet"),
             patch("workers.tasks.enviar_mensaje_whatsapp", create=True) as mock_whatsapp,
         ):
 
@@ -75,3 +75,77 @@ def test_download_audio_task_exito() -> None:
             mock_whatsapp.assert_called_once()
             call_kwargs = mock_whatsapp.call_args.kwargs
             assert call_kwargs["to_phone"] == test_sender
+
+
+def test_download_audio_task_whisper_falla() -> None:
+    """Verifica que si Whisper falla, envía mensaje de error y no intenta parsear."""
+    with (
+        patch("workers.tasks.transcribir_audio_whisper", return_value=None),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+        patch("workers.tasks.httpx.Client"),
+        patch("workers.tasks.os.makedirs"),
+        patch("workers.tasks.open", create=True),
+    ):
+
+        from workers.tasks import download_audio_task
+
+        # Ejecución
+        result = download_audio_task("12345", "50688888888")
+
+        # Aserciones
+        assert result == "/tmp/caja_chica/12345.ogg"
+        mock_whatsapp.assert_called_with(
+            to_phone="50688888888",
+            mensaje="No entendí el audio. Por favor, intentá de nuevo con más claridad.",
+        )
+        mock_parser.assert_not_called()
+
+
+def test_download_audio_task_parse_falla() -> None:
+    """Verifica que si el parser falla, envía mensaje de error y no guarda en Sheet."""
+    with (
+        patch("workers.tasks.transcribir_audio_whisper", return_value="texto valido"),
+        patch("workers.tasks.parse_financial_text", return_value=None),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+        patch("workers.tasks.httpx.Client"),
+        patch("workers.tasks.os.makedirs"),
+        patch("workers.tasks.open", create=True),
+    ):
+
+        from workers.tasks import download_audio_task
+
+        # Ejecución
+        result = download_audio_task("12345", "50688888888")
+
+        # Aserciones
+        assert result == "/tmp/caja_chica/12345.ogg"
+        mock_whatsapp.assert_called_with(
+            to_phone="50688888888",
+            mensaje=(
+                "No encontré datos financieros en tu mensaje. "
+                "Intentá de nuevo indicando monto, categoría y si es gasto o ingreso."
+            ),
+        )
+        mock_sheet.assert_not_called()
+
+
+def test_download_audio_task_whisper_no_rompe_flujo_exitoso() -> None:
+    """Valida que el flujo exitoso sigue funcionando como antes."""
+    with (
+        patch("workers.tasks.transcribir_audio_whisper", return_value="texto"),
+        patch(
+            "workers.tasks.parse_financial_text", return_value={"categoria": "A", "monto": "100"}
+        ),
+        patch("workers.tasks.append_transaction_to_sheet"),
+        patch("workers.tasks.enviar_mensaje_whatsapp"),
+        patch("workers.tasks.httpx.Client"),
+        patch("workers.tasks.os.makedirs"),
+        patch("workers.tasks.open", create=True),
+    ):
+
+        from workers.tasks import download_audio_task
+
+        result = download_audio_task("12345", "50688888888")
+        assert result == "/tmp/caja_chica/12345.ogg"
