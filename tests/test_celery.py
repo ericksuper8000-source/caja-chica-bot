@@ -23,7 +23,7 @@ def test_celery_inicializacion_correcta() -> None:
         "REDIS_URL": "redis://localhost:6379/0",
     }
 
-    with patch.dict("os.environ", mock_env, clear=True):
+    with patch.dict("os.environ", mock_env):
         # 3. Importamos el componente diferido dentro del contexto simulado
         from workers.celery_app import celery_app
 
