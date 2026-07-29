@@ -28,32 +28,30 @@ def test_download_audio_task_exito() -> None:
     with patch.dict("os.environ", mock_env):
         from workers.tasks import download_audio_task
 
-        with patch("workers.tasks.httpx.Client") as mock_client_class, patch(
-            "workers.tasks.os.makedirs"
-        ) as mock_makedirs, patch(
-            "workers.tasks.open", create=True
-        ) as mock_open, patch(
-            "workers.tasks.transcribir_audio_whisper",
-            return_value="transcripcion de prueba",
-        ) as _, patch(
-            "workers.tasks.parse_financial_text",
-            return_value={
-                "categoria": "comida",
-                "monto": "5000",
-            },
-        ) as _, patch(
-            "workers.tasks.append_transaction_to_sheet"
-        ) as _, patch(
-            "workers.tasks.enviar_mensaje_whatsapp", create=True
-        ) as mock_whatsapp:
+        with (
+            patch("workers.tasks.httpx.Client") as mock_client_class,
+            patch("workers.tasks.os.makedirs") as mock_makedirs,
+            patch("workers.tasks.open", create=True) as mock_open,
+            patch(
+                "workers.tasks.transcribir_audio_whisper",
+                return_value="transcripcion de prueba",
+            ) as _,
+            patch(
+                "workers.tasks.parse_financial_text",
+                return_value={
+                    "categoria": "comida",
+                    "monto": "5000",
+                },
+            ) as _,
+            patch("workers.tasks.append_transaction_to_sheet") as _,
+            patch("workers.tasks.enviar_mensaje_whatsapp", create=True) as mock_whatsapp,
+        ):
 
             mock_client_instance = MagicMock()
             mock_client_class.return_value.__enter__.return_value = mock_client_instance
 
             mock_response_meta = MagicMock()
-            mock_response_meta.json.return_value = {
-                "url": "https://cdn.facebook.com/m/audio.ogg"
-            }
+            mock_response_meta.json.return_value = {"url": "https://cdn.facebook.com/m/audio.ogg"}
 
             mock_response_audio = MagicMock()
             mock_response_audio.content = b"fake_ogg_bytes"

@@ -10,6 +10,4 @@ def test_config_loading() -> None:
         pytest.skip("Requiere .env real con credenciales de WhatsApp")
     settings = Settings()
     assert settings.WHATSAPP_API_TOKEN != "", "WHATSAPP_API_TOKEN no está configurado"
-    assert (
-        settings.WHATSAPP_PHONE_NUMBER_ID != ""
-    ), "WHATSAPP_PHONE_NUMBER_ID no está configurado"
+    assert settings.WHATSAPP_PHONE_NUMBER_ID != "", "WHATSAPP_PHONE_NUMBER_ID no está configurado"

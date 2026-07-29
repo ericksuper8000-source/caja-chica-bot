@@ -117,9 +117,7 @@ def test_recibir_mensaje_firma_hmac_valida() -> None:
     }
 
     payload_bytes = json.dumps(payload).encode("utf-8")
-    firma = hmac.new(
-        TEST_APP_SECRET.encode("utf-8"), payload_bytes, hashlib.sha256
-    ).hexdigest()
+    firma = hmac.new(TEST_APP_SECRET.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
 
     app.dependency_overrides.clear()
 

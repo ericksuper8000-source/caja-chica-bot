@@ -16,9 +16,7 @@ def get_sheets_client() -> gspread.Client:
     Inicializa y devuelve el cliente autenticado de gspread.
     """
     try:
-        client = gspread.service_account(
-            filename=settings.GOOGLE_APPLICATION_CREDENTIALS
-        )
+        client = gspread.service_account(filename=settings.GOOGLE_APPLICATION_CREDENTIALS)
         return client
     except Exception as e:
         logger.error(f"Error crítico al autenticar con gspread: {e}")
@@ -60,9 +58,7 @@ async def append_transaction_to_sheet(transaction_data: dict[str, Any]) -> bool:
 
         await asyncio.to_thread(_sync_append_row, spreadsheet_id, row_values)
 
-        logger.info(
-            f"Fila insertada con éxito en Sheets de forma asíncrona: {row_values}"
-        )
+        logger.info(f"Fila insertada con éxito en Sheets de forma asíncrona: {row_values}")
         return True
 
     except gspread.exceptions.APIError as error:
