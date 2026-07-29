@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import gspread
@@ -42,7 +42,7 @@ async def append_transaction_to_sheet(transaction_data: dict[str, Any]) -> bool:
     spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
 
     try:
-        fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        fecha_actual = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         monto = transaction_data.get("monto", 0)
         tipo = transaction_data.get("tipo_movimiento", "Gasto")
 
