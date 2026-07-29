@@ -1,70 +1,204 @@
-# 🤖 El Analista Financiero de Caja Chica vía WhatsApp
-**Fecha de inicio:** 10/07/2026  
+# El Analista Financiero de Caja Chica vía WhatsApp
+
+**Inicio:** 10/07/2026 · **Última actualización:** 29/07/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
-El sistema permite registrar ingresos y gastos mediante procesamiento asincrónico de notas de voz y mensajes de texto enviados por WhatsApp, traduciendo modismos locales ("rojos", "tucanes", "tejas") a datos contables exactos y persistiendo la información de forma inmediata.
+Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
 
 ---
 
-## 🏗️ Arquitectura y Decisiones Técnicas Basadas en Datos
-El sistema sigue un patrón de **microservicios contenerizados y asincrónicos** para garantizar alta disponibilidad y cumplir con las restricciones de negocio:
+## Features
 
-- **Backend API:** Python 3.12 + FastAPI (validación automática con Pydantic v2).
-- **Procesamiento Asincrónico:** Celery + Redis. Respuesta inmediata al webhook de WhatsApp (<2s).
-- **Base de Datos:** PostgreSQL 15+ (auditoría y aislamiento de datos).
-- **APIs de IA:** OpenAI Whisper API + GPT-4o-mini con Structured Outputs.
-- **Persistencia Externa (Fase 3):** Google Sheets vía gspread + google-auth.
-- **Proxy Inverso:** Caddy Server (SSL nativo y automatizado).
+### Core
+- **Webhook Meta WhatsApp** — Endpoints GET/POST `/v1/whatsapp/webhook` con verificación HMAC-SHA256 y payload tipado (7 modelos Pydantic anidados con `model_dump(by_alias=True)`, `AudioMedia`, `Message`, `Contact`, `Value`, `Change`, `Entry`, `WebhookPayload`).
+- **Transcripción Whisper API** — Procesamiento asíncrono de audio vía OpenAI Whisper.
+- **Extracción Financiera con GPT-4o-mini** — Structured Outputs para extraer `monto` (int), `categoria`, `tipo_movimiento`, `detalle` desde lenguaje natural y modismos costarricenses.
+- **Persistencia en Google Sheets** — Inyección atómica vía `gspread` + `asyncio.to_thread`.
+- **Notificación Outbound** — Respuesta automática al usuario por WhatsApp tras cada transacción exitosa o fallida.
 
----
-
-## 📌 Estado del Proyecto y Línea de Tiempo
-Metodología: **TDD estricto** (ninguna feature avanza si las pruebas no están en verde).
-
-### 📅 Semana 1: Infraestructura y Handshake con Meta
-- [x] Fase 0: Entorno Base (Docker Compose, CI/CD espejado, ramas protegidas).
-- [x] Endpoints GET/POST con Pydantic.
-- [x] Verificación HMAC-SHA256 en `app/core/security.py`.
-
-### 📅 Semana 2: Asincronía, IA y Suite "Test Tico"
-- [x] Configuración Celery + Redis (`download_audio_task`).
-- [x] Wrapper asincrónico para Whisper + extractor financiero con GPT-4o-mini.
-- [x] Suite de 22 pruebas unitarias para modismos contables costarricenses.
-
-### 📅 Semana 3: Persistencia Física, Saneamiento y Validación
-- [x] Autenticación GCP (incl. gestión segura de secretos).
-- [x] Servicio `sheets_service.py` y orquestación Celery-Sheets.
-- [x] Normalización de paquetes (`__init__.py`).
-- [x] **Validación de Calidad Local:** Implementación de `black`, `flake8` (configuración personalizada) y validación de suite de 22 pruebas unitarias.
+### Estabilización y Hardening (29/07/2026)
+- **Rate Limiting** — slowapi middleware (`10/min` producción, `1000/min` test) protege contra abuso de API de OpenAI. Responde HTTP 429 al exceder el límite.
+- **Health Check** — `GET /health` verifica conectividad con Redis y Celery (200 ok / 503 degraded).
+- **Caché de Clientes** — `gspread` client y `httpx.AsyncClient` se inicializan una sola vez (`lru_cache` y variable de módulo respectivamente).
+- **Manejo de Errores al Usuario** — Cuando Whisper no transcribe o el parser no entiende, el bot responde por WhatsApp con un mensaje de cortesía en lugar de fallar silenciosamente.
+- **Pipeline Asíncrono Limpio** — Las 3 operaciones (Whisper → GPT → Sheets + WhatsApp) se ejecutan en un solo `asyncio.run()` mediante `_procesar_pipeline()`, eliminando la creación de 3-4 event loops por tarea.
+- **Archivos Temporales Seguros** — Uso de `tempfile.gettempdir()` en lugar de `/tmp` hardcodeado; `os.remove()` protegido con `try/except OSError`.
+- **Validación de Argumentos** — `extraer_datos_audio()` lanza `ValueError` si `media_id` o `from_phone` son `None`.
+- **Tipado Estricto** — Mypy `--strict` con 0 errores en 15 archivos fuente; `pydantic.v1` para schemas complejos.
 
 ---
 
-## 🛡️ Seguridad y Endurecimiento (Hardened)
-- **Gestión de Secretos:** Implementación de blindaje de credenciales mediante `pydantic-settings` y variables de entorno. 
-- **Aislamiento de Seguridad:** Eliminación de archivos JSON de credenciales del VCS (Git) y configuración de `.gitignore` estricto para evitar filtraciones.
+## Arquitectura y Decisiones Técnicas
+
+```
+WhatsApp Usuario
+    |
+    v
+Meta API → FastAPI (app/main.py)
+    |       · Validar HMAC (app/core/security.py)
+    |       · Validar schema Pydantic (app/schemas/whatsapp.py)
+    |       · Extraer media_id y phone (app/core/utils.py)
+    |       · Responder HTTP 200 OK (< 2 s)
+    |
+    v
+Celery Worker (workers/tasks.py)
+    · Descargar audio de Meta API
+    · Transcribir con Whisper (services/openai_service.py)
+    · Extraer datos con GPT-4o-mini (services/openai_service.py)
+    · Insertar en Google Sheets (services/sheets_service.py)
+    · Responder al usuario (services/whatsapp_service.py)
+```
+
+### Stack
+| Componente | Elección | Razón |
+|---|---|---|
+| Backend | Python 3.12 + FastAPI | Tipado nativo, rendimiento, ecosistema |
+| Tareas async | Celery + Redis (broker & backend) | Timeouts de Meta (< 2 s) exigen delegación |
+| Base de datos | PostgreSQL 15+ | Auditoría y multi-tenancy futuro (no usado en MVP) |
+| IA | OpenAI Whisper + GPT-4o-mini | Único provider en MVP; `transcribir_audio_whisper()` es fácil de reemplazar |
+| Persistencia MVP | Google Sheets vía `gspread` | 1 hoja global para 20-50 clientes |
+| Proxy | Caddy | SSL automático, cero configuración |
+| CI/CD | GitHub Actions + GitLab CI | Pipelines idénticos y espejados desde un solo `push` |
+
+### Decisiones Clave
+
+**Persistencia Google Sheets → PostgreSQL (migración gradual):**
+- MVP: 1 hoja global, todos los clientes comparten la misma hoja.
+- Post-MVP (venta inicial): 1 hoja con pestañas por cliente. Sin PostgreSQL.
+- Crecimiento (50+ clientes): Migrar a PostgreSQL con `tenant_id`. Razón: Sheets se vuelve lenta con >50 clientes concurrentes.
+- SaaS masivo: Onboarding automatizado + Stripe + Terraform.
+
+**Provider de IA — Solo OpenAI:**
+- MVP: Whisper API + GPT-4o-mini. Sin abstracción.
+- Post-MVP (>500 transacciones/día): Evaluar Ollama + Whisper local. La función es pura y fácil de reemplazar.
+
+**Rate Limiting — slowapi en lugar de PostgreSQL + límite diario:**
+- Implementación middleware, sin dependency extra de base de datos.
+- Límite por minuto (10 req/min) en vez de 20/día. Protege el mismo vector de abuso con menor complejidad.
+- Alternativa considerada: tabla PostgreSQL con contador diario por usuario. Se descartó porque requiere migrations, conexión a DB que aún no está en el flujo crítico, y agrega latencia a cada request.
+
+**Single Event Loop vs. Múltiples `asyncio.run()`:**
+- Original: cada sub-operación (transcripción, extracción, sheets) llamaba `asyncio.run()` por separado → 3-4 event loops por tarea, los loops anidados fallan en Python ≥ 3.12.
+- Solución: una función `_procesar_pipeline()` async que orquesta todo, invocada por un único `asyncio.run()`.
 
 ---
 
-## ⏱️ Tiempos de Implementación
-| Fase | Estimado | Real | Estado |
-|------|----------|------|--------|
-| Configuración Docker & CI/CD | 4h | 5h | ✅ Completado |
-| Seguridad Webhook & HMAC | 8h | 9h | ✅ Completado |
-| Orquestación Celery + IA | 16h | 15h | ✅ Completado |
-| Integración Sheets & Refactor | 10h | 14h | ✅ Completado |
-| Validación de Calidad y Estilo | 2h | 3h | ✅ Completado |
+## Estado del Proyecto
+
+- **31 tests, 31 passed** · mypy `--strict` 0 errores · ruff 0 warnings
+- CI/CD: GitHub Actions + GitLab CI (pipelines idénticos)
+
+### Timeline
+
+| Semana | Hito | Estado |
+|---|---|---|
+| 1 (Jul 10-14) | Infraestructura: Docker, CI/CD, webhook Meta, HMAC | ✅ |
+| 2 (Jul 15-18) | IA: Celery, Whisper, GPT-4o-mini, 22 tests modismos ticos | ✅ |
+| 3 (Jul 19-22) | Persistencia: GCP auth, Sheets, orquestación, validación E2E | ✅ |
+| 4 (Jul 27-29) | Hardening: rate limiting, health check, caché, tipado webhook, pyproject.toml, CI cleanup, Docker slim, 31 tests | ✅ |
+
+### Pendientes para MVP Comercial
+
+- **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción.
+- **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
+- **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
+- **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS.
 
 ---
 
-## 🔄 Retrospectiva: ¿Qué haríamos distinto?
-- Configurar `mypy.ini` con plugin `pydantic.mypy` desde el inicio.
-- Centralizar configuración de herramientas en `pyproject.toml` desde el inicio.
+## Instalación
+
+```bash
+# 1. Clonar
+git clone <repo-url> caja-chica-bot
+cd caja-chica-bot
+
+# 2. Variables de entorno
+cp .env.example .env
+# Editar .env con credenciales reales (Meta, OpenAI, GCP)
+
+# 3. Iniciar con Docker
+docker compose up --build -d
+
+# 4. Verificar health
+curl http://localhost:8000/health
+
+# 5. Correr tests
+docker compose exec app python -m pytest tests/ -v
+```
+
+### Requisitos
+- Docker + Docker Compose
+- Cuenta de Meta for Developers (WhatsApp API)
+- API Key de OpenAI
+- Google Cloud Service Account con permisos en Google Sheets
 
 ---
 
-## ✅ Calidad de Código y CI/CD
-Pipelines idénticos en GitHub Actions y GitLab CI/CD con:
-- **Black:** Formateador estricto aplicado.
-- **Flake8:** Linter configurado con `max-line-length = 100`.
-- **Mypy (--strict):** Validación estricta de Type Hints.
-- **Pytest:** 22 pruebas unitarias validadas (suite asincrónica).
+## Uso
+
+1. Envía un mensaje o nota de voz al número de WhatsApp registrado.
+2. El bot procesa el audio (Whisper → GPT-4o-mini → Sheets).
+3. Recibís una confirmación por WhatsApp con los datos extraídos.
+4. Si no entiende el mensaje, recibís un mensaje de cortesía pidiendo reintentar.
+
+### Modismos Soportados
+| Término | Significado |
+|---|---|
+| 1 rojo | ₡1.000 |
+| 1 teja | ₡100 |
+| 1 teja larga | ₡100.000 |
+| 1 tucán | ₡5.000 |
+
+---
+
+## Tiempos de Implementación
+
+| Fase | Estimado | Real | Notas |
+|---|---|---|---|
+| Docker & CI/CD | 4 h | 5 h | Pipelines gemelos (GitHub + GitLab) |
+| Webhook & HMAC | 8 h | 9 h | Validación de firma con pruebas E2E |
+| Celery + IA (Whisper + GPT) | 16 h | 15 h | Structured Outputs, 22 tests modismos |
+| Google Sheets + Outbound WhatsApp | 10 h | 14 h | Autenticación GCP, orquestación, tests |
+| Calidad: lint, types, pyproject.toml | 2 h | 3 h | Black, Ruff, mypy --strict, pytest |
+| **Hardening (29/07)** | **6 h** | **8 h** | Rate limiting, health, caché, tipado, CI cleanup, Docker slim, optimización event loop |
+
+---
+
+## ¿Qué Haríamos Distinto?
+
+1. **`pyproject.toml` desde el inicio.** Arrancamos con configs sueltas (`.flake8`, `mypy.ini`, `pytest.ini`, `pyproject.toml` no existía). Centralizar todo en `pyproject.toml` desde el día 1 habría ahorrado 15 minutos de búsqueda y 3 commits de limpieza.
+2. **Tipado del webhook en la primera iteración.** Los 7 modelos Pydantic para el payload de Meta se implementaron en la Fase 4 en lugar de la Fase 1. Haberlos definido desde el principio habría prevenido dos bugs de serialización detectados en producción simulada.
+3. **slowapi como rate limiter desde el diseño.** La protección contra abuso se postergó a "post-MVP" y luego costó 2 h de integración porque el middleware requiere modificar el `app` object después de creado. Si se hubiera contemplado en la arquitectura inicial, se habría agregado en 15 minutos.
+4. **Caché de clientes HTTP desde el inicio.** `gspread` y `httpx.AsyncClient` se instanciaban en cada request. La corrección fue trivial (5 min), pero es el tipo de deuda que escala mal con el número de workers.
+5. **Eliminar `test_env_config.py` antes.** Se "reescribió con asserts" en la auditoría del 21/07 pero seguía siendo un archivo que requería `.env` real para correr y no aportaba valor en CI. Se eliminó en la siguiente ronda. Debimos eliminarlo directamente.
+6. **Dockerfile multistage.** Capa actual única de ~450 MB. Una build multistage (`builder` → `runtime`) reduciría el tamaño a ~180 MB y mejoraría la seguridad al no incluir herramientas de build en la imagen final.
+
+---
+
+## Seguridad
+
+- **Secretos:** `pydantic-settings` + variables de entorno. Prohibido hardcodear credenciales.
+- **GCP:** Archivo JSON de service account fuera del repo en `secrets/`, ignorado por `.gitignore`.
+- **HMAC:** Firma `X-Hub-Signature-256` validada en cada webhook entrante.
+- **Docker:** `build-essential` y capa `apt-get` eliminados de la imagen final. Contenedor ejecutado como usuario no-root.
+- **CI/CD:** Sin secretos hardcodeados en pipelines. Variables inyectadas desde GitHub/GitLab Secrets.
+- **Rate Limiting:** 10 requests/minuto protegen contra abuso de API de OpenAI.
+
+---
+
+## Calidad de Código
+
+| Herramienta | Comando | Resultado |
+|---|---|---|
+| Black | `black . --check` | Formateo consistente |
+| Ruff | `ruff check .` | 0 errores |
+| Mypy | `mypy --strict app/ workers/ services/` | 0 errores en 15 archivos |
+| Pytest | `pytest tests/ -v` | 31/31 passed |
+
+```bash
+# QA local (Docker)
+MSYS_NO_PATHCONV=1 docker compose exec app python -m pytest tests/ -v
+MSYS_NO_PATHCONV=1 docker compose exec app python -m ruff check .
+MSYS_NO_PATHCONV=1 docker compose exec app python -m mypy --strict app/ workers/ services/
+```
