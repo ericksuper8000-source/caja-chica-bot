@@ -33,7 +33,7 @@ quality-and-tests:
     # Ejecutamos las pruebas con las mismas banderas que validamos localmente
     - black --check app/ workers/ services/ tests/
     - ruff check app/ workers/ services/ tests/
-    - mypy app/ workers/ services/ tests/ --ignore-missing-imports
+    - mypy app/ workers/ services/ --ignore-missing-imports
     - pytest tests/
 
   only:

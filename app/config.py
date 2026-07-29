@@ -1,5 +1,6 @@
 import os
 from typing import ClassVar
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

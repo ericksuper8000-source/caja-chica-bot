@@ -2,11 +2,11 @@ import hashlib
 import hmac
 import json
 import time
-from typing import Generator
+from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from app.core.security import validar_firma_whatsapp
 from app.main import app
@@ -117,9 +117,7 @@ def test_recibir_mensaje_firma_hmac_valida() -> None:
     }
 
     payload_bytes = json.dumps(payload).encode("utf-8")
-    firma = hmac.new(
-        TEST_APP_SECRET.encode("utf-8"), payload_bytes, hashlib.sha256
-    ).hexdigest()
+    firma = hmac.new(TEST_APP_SECRET.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
 
     app.dependency_overrides.clear()
 

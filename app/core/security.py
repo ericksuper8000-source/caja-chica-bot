@@ -1,7 +1,9 @@
 import hashlib
 import hmac
 from typing import Optional
+
 from fastapi import Header, HTTPException, Request
+
 from app.config import settings
 
 APP_SECRET = settings.WHATSAPP_APP_SECRET
@@ -27,6 +29,4 @@ async def validar_firma_whatsapp(
     ).hexdigest()
 
     if not hmac.compare_digest(expected_signature, actual_signature):
-        raise HTTPException(
-            status_code=403, detail="Firma inválida. Origen no legítimo."
-        )
+        raise HTTPException(status_code=403, detail="Firma inválida. Origen no legítimo.")

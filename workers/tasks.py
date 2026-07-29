@@ -1,7 +1,10 @@
+#!/usr/bin/env python3
 import asyncio
 import concurrent.futures
 import logging
 import os
+from collections.abc import Coroutine
+from typing import Any
 
 import httpx
 
@@ -17,7 +20,7 @@ from workers.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-def _run_async(coro):
+def _run_async(coro: Coroutine[Any, Any, Any]) -> Any:
     """
     Ejecuta una corrutina de forma segura dentro de un Celery task.
     Reutiliza el event loop existente si ya está corriendo, o crea uno nuevo.
@@ -33,7 +36,7 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
-@celery_app.task(name="workers.tasks.download_audio_task")
+@celery_app.task(name="workers.tasks.download_audio_task")  # type: ignore[untyped-decorator]
 def download_audio_task(media_id: str, sender_phone: str) -> str:
     # 1. Validación de seguridad
     token = settings.WHATSAPP_API_TOKEN
@@ -66,22 +69,42 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
 
         # 3. Procesamiento IA
         transcripcion = _run_async(transcribir_audio_whisper(file_path))
-        transaction_data = _run_async(parse_financial_text(transcripcion or ""))
+
+        if not transcripcion:
+            _run_async(
+                enviar_mensaje_whatsapp(
+                    to_phone=sender_phone,
+                    mensaje="No entendí el audio. Por favor, intentá de nuevo con más claridad.",
+                )
+            )
+            return file_path
+
+        transaction_data = _run_async(parse_financial_text(transcripcion))
 
         # 4. Persistencia e Integración de Respuesta
-        if transaction_data:
-            _run_async(append_transaction_to_sheet(transaction_data))
-
-            # Envío de respuesta al usuario que envió el audio (sender_phone)
+        if not transaction_data:
             _run_async(
                 enviar_mensaje_whatsapp(
                     to_phone=sender_phone,
                     mensaje=(
-                        f"Transacción registrada: {transaction_data['categoria']} - "
-                        f"₡{transaction_data['monto']}"
+                        "No encontré datos financieros en tu mensaje. Intentá de nuevo "
+                        "indicando monto, categoría y si es gasto o ingreso."
                     ),
                 )
             )
+            return file_path
+
+        # Caso de éxito
+        _run_async(append_transaction_to_sheet(transaction_data))
+        _run_async(
+            enviar_mensaje_whatsapp(
+                to_phone=sender_phone,
+                mensaje=(
+                    f"Transacción registrada: {transaction_data['categoria']} - "
+                    f"₡{transaction_data['monto']}"
+                ),
+            )
+        )
 
         return file_path
 

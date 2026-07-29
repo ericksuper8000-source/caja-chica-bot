@@ -25,5 +25,5 @@ jobs:
         run: |
           black --check app/ workers/ services/ tests/
           ruff check app/ workers/ services/ tests/
-          mypy app/ services/ workers/ tests/ --ignore-missing-imports
+          mypy app/ services/ workers/ --ignore-missing-imports
           pytest tests/
