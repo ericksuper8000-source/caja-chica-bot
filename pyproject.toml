@@ -21,7 +21,9 @@ target-version = ["py312"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+warn_unused_ignores = false
 ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
 exclude = ["tests/"]
 
 [tool.pytest.ini_options]
