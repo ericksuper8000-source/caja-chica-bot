@@ -1,7 +1,9 @@
 import os
+from typing import Any, Literal
+
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
-from typing import Optional, Literal
+
 from app.config import settings
 
 # En CI/CD no hay .env, usamos un placeholder para que el módulo pueda importarse.
@@ -14,9 +16,7 @@ openai_client = AsyncOpenAI(api_key=_api_key)
 # 1. ESQUEMAS DE ENTORNO Y MODELOS ESTRUCTURADOS
 # ==========================================
 class TransactionResponse(BaseModel):
-    monto: int = Field(
-        description="Monto numérico exacto de la transacción financiera."
-    )
+    monto: int = Field(description="Monto numérico exacto de la transacción financiera.")
     categoria: str = Field(
         description="Categoría del movimiento (ej: Alimentación, Transporte, Servicios)."
     )
@@ -29,7 +29,7 @@ class TransactionResponse(BaseModel):
 # ==========================================
 # 2. SERVICIO DE TRANSCRIPCIÓN (WHISPER) - PASO 2.4
 # ==========================================
-async def transcribir_audio_whisper(file_path: str) -> Optional[str]:
+async def transcribir_audio_whisper(file_path: str) -> str | None:
     """
     Recibe la ruta local de un archivo de audio (.ogg / .mp3), lo procesa
     a través de OpenAI Whisper API y retorna la transcripción adaptada al acento tico.
@@ -45,14 +45,14 @@ async def transcribir_audio_whisper(file_path: str) -> Optional[str]:
             )
             return transcript.text
     except Exception as e:
-        print(f"Error en la capa de transcripción Whisper: {str(e)}")
+        print(f"Error en la capa de transcripción Whisper: {e!s}")
         return None
 
 
 # ==========================================
 # 3. SERVICIO DE EXTRACCIÓN ESTRUCTURADA - PASO 2.5
 # ==========================================
-async def parse_financial_text(text_input: str) -> Optional[dict]:
+async def parse_financial_text(text_input: str) -> dict[str, Any] | None:
     """
     Procesa una entrada de texto utilizando GPT-4o-mini y Structured Outputs.
     Traduce los modismos costarricenses (ej: rojos, tejas, tucanes) a valores enteros.
@@ -90,5 +90,5 @@ async def parse_financial_text(text_input: str) -> Optional[dict]:
         return None
 
     except Exception as e:
-        print(f"Error procesando Structured Outputs con OpenAI: {str(e)}")
+        print(f"Error procesando Structured Outputs con OpenAI: {e!s}")
         return None

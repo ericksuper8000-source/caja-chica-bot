@@ -34,12 +34,8 @@ def test_hmac_firma_cambia_con_diferente_payload() -> None:
     payload_a = b'{"dato": "uno"}'
     payload_b = b'{"dato": "dos"}'
 
-    firma_a = hmac.new(
-        SECRET_TEST.encode("utf-8"), payload_a, hashlib.sha256
-    ).hexdigest()
-    firma_b = hmac.new(
-        SECRET_TEST.encode("utf-8"), payload_b, hashlib.sha256
-    ).hexdigest()
+    firma_a = hmac.new(SECRET_TEST.encode("utf-8"), payload_a, hashlib.sha256).hexdigest()
+    firma_b = hmac.new(SECRET_TEST.encode("utf-8"), payload_b, hashlib.sha256).hexdigest()
 
     assert firma_a != firma_b
 

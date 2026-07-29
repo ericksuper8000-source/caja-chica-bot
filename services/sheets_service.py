@@ -1,29 +1,29 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
+
 import gspread
 from gspread.utils import ValueInputOption  # Importamos el enumerado para el tipado
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-def get_sheets_client() -> gspread.Client:
+def get_sheets_client() -> Any:
     """
     Inicializa y devuelve el cliente autenticado de gspread.
     """
     try:
-        client = gspread.service_account(
-            filename=settings.GOOGLE_APPLICATION_CREDENTIALS
-        )
+        client = gspread.service_account(filename=settings.GOOGLE_APPLICATION_CREDENTIALS)  # type: ignore[attr-defined]
         return client
     except Exception as e:
         logger.error(f"Error crítico al autenticar con gspread: {e}")
         raise e
 
 
-def _sync_append_row(spreadsheet_id: str, row_values: list) -> None:
+def _sync_append_row(spreadsheet_id: str, row_values: list[Any]) -> None:
     """
     Operación puramente síncrona que interactúa con la API de Google Sheets.
     """
@@ -35,7 +35,7 @@ def _sync_append_row(spreadsheet_id: str, row_values: list) -> None:
     worksheet.append_row(row_values, value_input_option=ValueInputOption.user_entered)
 
 
-async def append_transaction_to_sheet(transaction_data: Dict[str, Any]) -> bool:
+async def append_transaction_to_sheet(transaction_data: dict[str, Any]) -> bool:
     """
     Inserta una nueva fila en Google Sheets de manera asíncrona.
     """
@@ -58,9 +58,7 @@ async def append_transaction_to_sheet(transaction_data: Dict[str, Any]) -> bool:
 
         await asyncio.to_thread(_sync_append_row, spreadsheet_id, row_values)
 
-        logger.info(
-            f"Fila insertada con éxito en Sheets de forma asíncrona: {row_values}"
-        )
+        logger.info(f"Fila insertada con éxito en Sheets de forma asíncrona: {row_values}")
         return True
 
     except gspread.exceptions.APIError as error:

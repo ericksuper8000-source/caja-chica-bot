@@ -1,5 +1,7 @@
-import httpx
 import logging
+
+import httpx
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -9,9 +11,7 @@ async def enviar_mensaje_whatsapp(to_phone: str, mensaje: str) -> bool:
     """
     Envía un mensaje de texto a través de la API de WhatsApp Business.
     """
-    url = (
-        f"https://graph.facebook.com/v18.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
-    )
+    url = f"https://graph.facebook.com/v18.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {settings.WHATSAPP_API_TOKEN}",
         "Content-Type": "application/json",
