@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+import tempfile
 from collections.abc import Coroutine
 from typing import Any
 
@@ -32,7 +33,8 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
         return "ERROR_MISSING_TOKEN"
 
     headers = {"Authorization": f"Bearer {token}"}
-    file_path = f"/tmp/caja_chica/{media_id}.ogg"
+    temp_dir = os.path.join(tempfile.gettempdir(), "caja_chica")
+    file_path = os.path.join(temp_dir, f"{media_id}.ogg")
 
     try:
         # 2. Descarga del binario
@@ -50,7 +52,7 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
             audio_response = client.get(download_url)
             audio_response.raise_for_status()
 
-            os.makedirs("/tmp/caja_chica", exist_ok=True)
+            os.makedirs(temp_dir, exist_ok=True)
             with open(file_path, "wb") as f:
                 f.write(audio_response.content)
 
