@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 29/07/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 03/08/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -25,6 +25,10 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
 - **Archivos Temporales Seguros** — Uso de `tempfile.gettempdir()` en lugar de `/tmp` hardcodeado; `os.remove()` protegido con `try/except OSError`.
 - **Validación de Argumentos** — `extraer_datos_audio()` lanza `ValueError` si `media_id` o `from_phone` son `None`.
 - **Tipado Estricto** — Mypy `--strict` con 0 errores en 15 archivos fuente; `pydantic.v1` para schemas complejos.
+
+### Corrección de Autenticación Meta (03/08/2026)
+- **Bearer Token en descarga de audio (3.8.1)** — `workers/tasks.py` envía `Authorization: Bearer` en las dos llamadas a Meta (info del media y descarga del archivo). Antes la descarga fallaba con `401 Unauthorized`. Test en `tests/test_tasks.py` verifica que ambas llamadas incluyen el header.
+- **Validación de descarga 200 OK (3.8.2, a medias)** — Prueba directa contra servidores reales de Meta: subir nota de voz real → media_id → descargar con el fix respondió `200 OK` (archivo idéntico, 66.977 bytes). Pendiente el flujo completo con nota de voz real por WhatsApp (requiere URL pública — ngrok, Paso 5.4).
 
 ---
 
@@ -87,6 +91,7 @@ Celery Worker (workers/tasks.py)
 
 - **31 tests, 31 passed** · mypy `--strict` 0 errores · ruff 0 warnings
 - CI/CD: GitHub Actions + GitLab CI (pipelines idénticos)
+- **03/08/2026:** Descarga de audio de Meta corregida (Bearer Token) y validada con `200 OK` contra servidores reales. Siguiente paso: ngrok (Paso 5.4) para el E2E completo.
 
 ### Timeline
 
@@ -96,10 +101,11 @@ Celery Worker (workers/tasks.py)
 | 2 (Jul 15-18) | IA: Celery, Whisper, GPT-4o-mini, 22 tests modismos ticos | ✅ |
 | 3 (Jul 19-22) | Persistencia: GCP auth, Sheets, orquestación, validación E2E | ✅ |
 | 4 (Jul 27-29) | Hardening: rate limiting, health check, caché, tipado webhook, pyproject.toml, CI cleanup, Docker slim, 31 tests | ✅ |
+| 5 (Ago 3) | Autenticación Meta: Bearer Token en descarga (3.8.1) + validación descarga 200 OK (3.8.2 a medias) | 🔄 |
 
 ### Pendientes para MVP Comercial
 
-- **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción.
+- **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción. **Siguiente paso inmediato (03/08/2026)** para completar el E2E real del flujo completo.
 - **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
 - **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
 - **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS.
