@@ -73,7 +73,7 @@ def download_audio_task(media_id: str, sender_phone: str) -> str:
             if not download_url:
                 raise ValueError(f"No se encontró URL para media_id: {media_id}")
 
-            audio_response = client.get(download_url)
+            audio_response = client.get(download_url, headers=headers)
             audio_response.raise_for_status()
 
             os.makedirs(temp_dir, exist_ok=True)
