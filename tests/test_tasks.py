@@ -72,6 +72,11 @@ def test_download_audio_task_exito() -> None:
             # Aserciones
             assert result_path == EXPECTED_PATH
             assert mock_client_instance.get.call_count == 2
+            expected_headers = {"Authorization": "Bearer test_api"}
+            assert all(
+                call.kwargs.get("headers") == expected_headers
+                for call in mock_client_instance.get.call_args_list
+            )
             mock_makedirs.assert_called_once_with(EXPECTED_DIR, exist_ok=True)
             mock_open.assert_called_once_with(EXPECTED_PATH, "wb")
 
