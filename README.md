@@ -24,7 +24,8 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
 - **Pipeline Asíncrono Limpio** — Las 3 operaciones (Whisper → GPT → Sheets + WhatsApp) se ejecutan en un solo `asyncio.run()` mediante `_procesar_pipeline()`, eliminando la creación de 3-4 event loops por tarea.
 - **Archivos Temporales Seguros** — Uso de `tempfile.gettempdir()` en lugar de `/tmp` hardcodeado; `os.remove()` protegido con `try/except OSError`.
 - **Validación de Argumentos** — `extraer_datos_audio()` lanza `ValueError` si `media_id` o `from_phone` son `None`.
-- **Tipado Estricto** — Mypy `--strict` con 0 errores en 15 archivos fuente; `pydantic.v1` para schemas complejos.
+- **Tipado** — Mypy (config `pyproject.toml`, sin `--strict`, igual que la CI) en verde
+  sobre 15 archivos fuente. Schemas con Pydantic v2.
 
 ### Corrección de Autenticación Meta (03/08/2026)
 - **Bearer Token en descarga de audio (3.8.1)** — `workers/tasks.py` envía `Authorization: Bearer` en las dos llamadas a Meta (info del media y descarga del archivo). Antes la descarga fallaba con `401 Unauthorized`. Test en `tests/test_tasks.py` verifica que ambas llamadas incluyen el header.
@@ -89,7 +90,7 @@ Celery Worker (workers/tasks.py)
 
 ## Estado del Proyecto
 
-- **31 tests, 31 passed** · mypy `--strict` 0 errores · ruff 0 warnings
+- **31 tests, 31 passed** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde
 - CI/CD: GitHub Actions + GitLab CI (pipelines idénticos)
 - **03/08/2026:** Descarga de audio de Meta corregida (Bearer Token) y validada con `200 OK` contra servidores reales. Siguiente paso: ngrok (Paso 5.4) para el E2E completo.
 
@@ -178,7 +179,8 @@ docker compose exec app python -m pytest tests/ -v
 3. **slowapi como rate limiter desde el diseño.** La protección contra abuso se postergó a "post-MVP" y luego costó 2 h de integración porque el middleware requiere modificar el `app` object después de creado. Si se hubiera contemplado en la arquitectura inicial, se habría agregado en 15 minutos.
 4. **Caché de clientes HTTP desde el inicio.** `gspread` y `httpx.AsyncClient` se instanciaban en cada request. La corrección fue trivial (5 min), pero es el tipo de deuda que escala mal con el número de workers.
 5. **Eliminar `test_env_config.py` antes.** Se "reescribió con asserts" en la auditoría del 21/07 pero seguía siendo un archivo que requería `.env` real para correr y no aportaba valor en CI. Se eliminó en la siguiente ronda. Debimos eliminarlo directamente.
-6. **Dockerfile multistage.** Capa actual única de ~450 MB. Una build multistage (`builder` → `runtime`) reduciría el tamaño a ~180 MB y mejoraría la seguridad al no incluir herramientas de build en la imagen final.
+6. ~~**Dockerfile multistage.**~~ Ya implementado (builder → runtime) desde el
+   03/08/2026; este punto quedó obsoleto.
 
 ---
 
@@ -187,7 +189,9 @@ docker compose exec app python -m pytest tests/ -v
 - **Secretos:** `pydantic-settings` + variables de entorno. Prohibido hardcodear credenciales.
 - **GCP:** Archivo JSON de service account fuera del repo en `secrets/`, ignorado por `.gitignore`.
 - **HMAC:** Firma `X-Hub-Signature-256` validada en cada webhook entrante.
-- **Docker:** `build-essential` y capa `apt-get` eliminados de la imagen final. Contenedor ejecutado como usuario no-root.
+- **Docker:** `build-essential` y capa `apt-get` eliminados de la imagen final. El
+  contenedor corre como root por ahora; el hardening (usuario no-root, filesystem
+  read-only, cap_drop) queda pendiente para la Fase 5 (hallazgo #12).
 - **CI/CD:** Sin secretos hardcodeados en pipelines. Variables inyectadas desde GitHub/GitLab Secrets.
 - **Rate Limiting:** 10 requests/minuto protegen contra abuso de API de OpenAI.
 
@@ -199,12 +203,12 @@ docker compose exec app python -m pytest tests/ -v
 |---|---|---|
 | Black | `black . --check` | Formateo consistente |
 | Ruff | `ruff check .` | 0 errores |
-| Mypy | `mypy --strict app/ workers/ services/` | 0 errores en 15 archivos |
+| Mypy | `mypy app/ workers/ services/` (config, sin `--strict`) | 0 errores en 15 archivos |
 | Pytest | `pytest tests/ -v` | 31/31 passed |
 
 ```bash
 # QA local (Docker)
 MSYS_NO_PATHCONV=1 docker compose exec app python -m pytest tests/ -v
 MSYS_NO_PATHCONV=1 docker compose exec app python -m ruff check .
-MSYS_NO_PATHCONV=1 docker compose exec app python -m mypy --strict app/ workers/ services/
+MSYS_NO_PATHCONV=1 docker compose exec app python -m mypy app/ workers/ services/
 ```
