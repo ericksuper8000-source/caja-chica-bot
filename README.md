@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 03/08/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 05/08/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -29,7 +29,20 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
 
 ### Corrección de Autenticación Meta (03/08/2026)
 - **Bearer Token en descarga de audio (3.8.1)** — `workers/tasks.py` envía `Authorization: Bearer` en las dos llamadas a Meta (info del media y descarga del archivo). Antes la descarga fallaba con `401 Unauthorized`. Test en `tests/test_tasks.py` verifica que ambas llamadas incluyen el header.
-- **Validación de descarga 200 OK (3.8.2, a medias)** — Prueba directa contra servidores reales de Meta: subir nota de voz real → media_id → descargar con el fix respondió `200 OK` (archivo idéntico, 66.977 bytes). Pendiente el flujo completo con nota de voz real por WhatsApp (requiere URL pública — ngrok, Paso 5.4).
+- **Validación de descarga 200 OK (3.8.2, a medias)** — Prueba directa contra servidores reales de Meta: subir nota de voz real → media_id → descargar con el fix respondió `200 OK` (archivo idéntico, 66.977 bytes).
+
+### Verificación de Meta completada (05/08/2026)
+- **App Secret real aplicado** — El `.env` usaba un placeholder (`mi_clave_secreta_de_meta_super_segura`); el real (`4eee54cd39cbe0efc4c7431a20cc96ec`, de Meta → Configuración → Básico) quedó configurado y el contenedor recreado (`docker compose up -d app`; un `restart` no basta).
+- **Firma HMAC-SHA256 validada matemáticamente** — El secret correcto reproduce la firma de Meta (`sha256=95ebcdd...`); el POST local con firma válida responde `200 {"status":"recibido"}` (el 403 desapareció).
+- **Suscripción WABA→App exitosa** — `POST /v26.0/<WABA>/subscribed_apps` → `{"success":true}`.
+- **Handshake de Meta** — `GET /v1/whatsapp/webhook` con `hub.challenge` responde 200.
+- **Pipeline de IA demostrado de punta a punta SIN Meta** — Con un audio real (`Almuerzo.m4a`): Whisper transcribió *"Se gastaron 2.500 colones en el almuerzo."*; GPT-4o-mini extrajo `{monto:2500, categoria:Alimentación, tipo:Gasto, detalle:Almuerzo}`; Google Sheets registró la fila `-2500 | Alimentación | Almuerzo` (verificada leyendo la hoja de vuelta).
+- **Nota de audio `.m4a`:** Whisper rechaza el codec AAC de los `.m4a` de iPhone ("Invalid file format"); convertirlos a WAV 16 kHz mono lo resuelve. Los `.ogg` (OPUS) de WhatsApp no tienen este problema.
+
+### Limitante actual: verificación de empresa de Meta (05/08/2026)
+- **Bloqueo externo:** la app está en **Development mode**. Meta **no entrega mensajes reales** de WhatsApp (ni notas de voz ni respuesta) hasta que la app se publique, lo que exige **verificación de empresa** (documento con razón social y dirección/teléfono). El dueño no tiene empresa registrada.
+- Los POSTs reales de Meta a ngrok nunca llegan: solo llegan `account_alerts` de prueba del panel.
+- **Alternativas evaluadas:** **Twilio Sandbox** (gratis para pruebas, sin verificación de empresa, $0.005/mensaje, requiere adaptador de webhook) o probar la lógica sin Meta (hoy demostrada).
 
 ---
 
@@ -90,9 +103,10 @@ Celery Worker (workers/tasks.py)
 
 ## Estado del Proyecto
 
-- **31 tests, 31 passed** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde
+- **31 tests, 31 passed** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde · `mypy --strict` en verde (05/08/2026)
 - CI/CD: GitHub Actions + GitLab CI (pipelines idénticos)
-- **03/08/2026:** Descarga de audio de Meta corregida (Bearer Token) y validada con `200 OK` contra servidores reales. Siguiente paso: ngrok (Paso 5.4) para el E2E completo.
+- **03/08/2026:** Descarga de audio de Meta corregida (Bearer Token) y validada con `200 OK` contra servidores reales.
+- **05/08/2026:** App Secret real aplicado, firma HMAC-SHA256 validada matemáticamente, suscripción WABA→App exitosa y **pipeline de IA demostrado de punta a punta sin Meta** (webhook simulado → Whisper → GPT-4o-mini → Google Sheets). Siguiente: desbloquear el E2E real (verificación de empresa de Meta / Twilio Sandbox).
 
 ### Timeline
 
@@ -103,10 +117,11 @@ Celery Worker (workers/tasks.py)
 | 3 (Jul 19-22) | Persistencia: GCP auth, Sheets, orquestación, validación E2E | ✅ |
 | 4 (Jul 27-29) | Hardening: rate limiting, health check, caché, tipado webhook, pyproject.toml, CI cleanup, Docker slim, 31 tests | ✅ |
 | 5 (Ago 3) | Autenticación Meta: Bearer Token en descarga (3.8.1) + validación descarga 200 OK (3.8.2 a medias) | 🔄 |
+| 6 (Ago 5) | App Secret real + firma HMAC validada + suscripción WABA→App + pipeline de IA demostrado sin Meta (Whisper→GPT→Sheets) | ✅ (parcial 3.8.2) |
 
 ### Pendientes para MVP Comercial
 
-- **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción. **Siguiente paso inmediato (03/08/2026)** para completar el E2E real del flujo completo.
+- **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción. **Bloqueado (05/08/2026):** Meta exige verificación de empresa para entregar tráfico real; alternativas: Twilio Sandbox o pausa del E2E real.
 - **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
 - **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
 - **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS.
@@ -203,7 +218,8 @@ docker compose exec app python -m pytest tests/ -v
 |---|---|---|
 | Black | `black . --check` | Formateo consistente |
 | Ruff | `ruff check .` | 0 errores |
-| Mypy | `mypy app/ workers/ services/` (config, sin `--strict`) | 0 errores en 15 archivos |
+| Mypy | `mypy app/ workers/ services/` (config, sin `--strict`, como la CI) | 0 errores en 15 archivos |
+| Mypy estricto | `mypy --strict` | **Success: no issues found in 15 source files (05/08/2026)** |
 | Pytest | `pytest tests/ -v` | 31/31 passed |
 
 ```bash
