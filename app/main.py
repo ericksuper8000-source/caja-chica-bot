@@ -25,7 +25,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # ty
 TOKEN_VERIFICACION = settings.WHATSAPP_VERIFY_TOKEN
 
 
-@app.get("/health")  # type: ignore[untyped-decorator]
+@app.get("/health")
 async def health_check() -> dict[str, str]:
     statuses: dict[str, str] = {}
 
@@ -58,7 +58,7 @@ async def health_check() -> dict[str, str]:
     return statuses
 
 
-@app.get("/v1/whatsapp/webhook", response_class=PlainTextResponse)  # type: ignore[untyped-decorator]
+@app.get("/v1/whatsapp/webhook", response_class=PlainTextResponse)
 async def verificar_webhook(
     hub_mode: str = Query(None, alias="hub.mode"),
     hub_verify_token: str = Query(None, alias="hub.verify_token"),
@@ -71,7 +71,7 @@ async def verificar_webhook(
 
 
 @limiter.limit("1000/minute" if settings.ENVIRONMENT == "test" else "10/minute")
-@app.post("/v1/whatsapp/webhook", dependencies=[Depends(validar_firma_whatsapp)])  # type: ignore[untyped-decorator]
+@app.post("/v1/whatsapp/webhook", dependencies=[Depends(validar_firma_whatsapp)])
 async def recibir_mensaje(request: Request, payload: WebhookPayload) -> dict[str, str]:
     # 1. Intentamos extraer los datos usando nuestra utilidad
     datos_audio = extraer_datos_audio(payload.model_dump(by_alias=True))
