@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 05/08/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 06/08/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -39,10 +39,22 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
 - **Pipeline de IA demostrado de punta a punta SIN Meta** — Con un audio real (`Almuerzo.m4a`): Whisper transcribió *"Se gastaron 2.500 colones en el almuerzo."*; GPT-4o-mini extrajo `{monto:2500, categoria:Alimentación, tipo:Gasto, detalle:Almuerzo}`; Google Sheets registró la fila `-2500 | Alimentación | Almuerzo` (verificada leyendo la hoja de vuelta).
 - **Nota de audio `.m4a`:** Whisper rechaza el codec AAC de los `.m4a` de iPhone ("Invalid file format"); convertirlos a WAV 16 kHz mono lo resuelve. Los `.ogg` (OPUS) de WhatsApp no tienen este problema.
 
-### Limitante actual: verificación de empresa de Meta (05/08/2026)
-- **Bloqueo externo:** la app está en **Development mode**. Meta **no entrega mensajes reales** de WhatsApp (ni notas de voz ni respuesta) hasta que la app se publique, lo que exige **verificación de empresa** (documento con razón social y dirección/teléfono). El dueño no tiene empresa registrada.
-- Los POSTs reales de Meta a ngrok nunca llegan: solo llegan `account_alerts` de prueba del panel.
-- **Alternativas evaluadas:** **Twilio Sandbox** (gratis para pruebas, sin verificación de empresa, $0.005/mensaje, requiere adaptador de webhook) o probar la lógica sin Meta (hoy demostrada).
+### E2E real completado (06/08/2026)
+- **El "bloqueo por verificación de empresa" era un FALSO POSITIVO:** la causa real de que
+  los audios no llegaran era el **callback URL del webhook borrado/no vigente** en la
+  suscripción de la app. Se re-registró vía API (`POST /v26.0/{app_id}/subscriptions` con
+  `callback_url=https://outweigh-reuse-blouse.ngrok-free.dev/v1/whatsapp/webhook`,
+  `verify_token` y `fields=messages`) → `{"success":true}` y handshake de Meta → 200 OK.
+- **Pipeline E2E real probado con una nota de voz:** WhatsApp → Meta → ngrok → FastAPI →
+  Celery → Whisper → GPT-4o-mini → Google Sheets → respuesta en WhatsApp:
+  **"Transacción registrada: Alimentación - 3000 colones"** (3 POSTs de Meta al webhook,
+  todos 200 `{"status":"recibido"}`).
+- **Limitante actual (PUNTO A, no vendible):** la app sigue en **Development mode** y el
+  número es de prueba (EEUU +1 555). El bot responde solo a **hasta 5 destinatarios** en la
+  allowlist del sandbox; los entrantes llegan de cualquier número. El modo dev SÍ entrega
+  tráfico real mientras el destinatario esté en la allowlist. Para producción (PUNTO B) se
+  necesita número real registrado en la WABA + despliegue HTTPS (5.1) — ver
+  `execution-plan.md` §"MAPA DE LISTO PARA".
 
 ---
 
@@ -106,7 +118,8 @@ Celery Worker (workers/tasks.py)
 - **31 tests, 31 passed** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde · `mypy --strict` en verde (05/08/2026)
 - CI/CD: GitHub Actions + GitLab CI (pipelines idénticos)
 - **03/08/2026:** Descarga de audio de Meta corregida (Bearer Token) y validada con `200 OK` contra servidores reales.
-- **05/08/2026:** App Secret real aplicado, firma HMAC-SHA256 validada matemáticamente, suscripción WABA→App exitosa y **pipeline de IA demostrado de punta a punta sin Meta** (webhook simulado → Whisper → GPT-4o-mini → Google Sheets). Siguiente: desbloquear el E2E real (verificación de empresa de Meta / Twilio Sandbox).
+- **05/08/2026:** App Secret real aplicado, firma HMAC-SHA256 validada matemáticamente, suscripción WABA→App exitosa y **pipeline de IA demostrado de punta a punta sin Meta** (webhook simulado → Whisper → GPT-4o-mini → Google Sheets).
+- **06/08/2026:** **E2E REAL COMPLETO** — nota de voz real → Sheets → respuesta en WhatsApp ("Transacción registrada: Alimentación - 3000 colones"). El "bloqueo por verificación de empresa" era un falso positivo (callback URL del webhook re-registrado). Alcance actual: **PUNTO A** (testeo interno, sandbox, ≤5 destinatarios).
 
 ### Timeline
 
@@ -118,10 +131,11 @@ Celery Worker (workers/tasks.py)
 | 4 (Jul 27-29) | Hardening: rate limiting, health check, caché, tipado webhook, pyproject.toml, CI cleanup, Docker slim, 31 tests | ✅ |
 | 5 (Ago 3) | Autenticación Meta: Bearer Token en descarga (3.8.1) + validación descarga 200 OK (3.8.2 a medias) | 🔄 |
 | 6 (Ago 5) | App Secret real + firma HMAC validada + suscripción WABA→App + pipeline de IA demostrado sin Meta (Whisper→GPT→Sheets) | ✅ (parcial 3.8.2) |
+| 7 (Ago 6) | **E2E real completo con Meta (5.4):** callback URL re-registrado (falso positivo del bloqueo), nota de voz real → Sheets → respuesta WhatsApp | ✅ |
 
 ### Pendientes para MVP Comercial
 
-- **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción. **Bloqueado (05/08/2026):** Meta exige verificación de empresa para entregar tráfico real; alternativas: Twilio Sandbox o pausa del E2E real.
+- **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción. **✅ COMPLETADO 06/08/2026** — E2E real validado con nota de voz real (falso positivo del bloqueo; ver arriba). Habilita el **PUNTO A** (testeo interno, ≤5 destinatarios en la allowlist).
 - **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
 - **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
 - **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS.
