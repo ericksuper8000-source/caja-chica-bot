@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 06/08/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 10/08/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -55,6 +55,27 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
   tráfico real mientras el destinatario esté en la allowlist. Para producción (PUNTO B) se
   necesita número real registrado en la WABA + despliegue HTTPS (5.1) — ver
   `execution-plan.md` §"MAPA DE LISTO PARA".
+
+### Precisión de la IA medible (Fase 5.5, 10/08/2026)
+- **Conjunto dorado (`specs/golden_set.json`)** — 30 casos con frase transcripción esperada y
+  respuesta correcta (monto/categoría/tipo), incluyendo modismos ticos, montos en palabras,
+  casos sin monto, audio largo y ruido de fondo.
+- **Audios reales (`specs/golden_audio/`)** — 29 audios grabados por el fundador
+  (`Caso_2.m4a`…`Caso_30.m4a`); el Caso 1 fue validado aparte por el E2E real. Los casos
+  27–30 son propios del dueño (dos flujos en un audio / ruido de fondo).
+- **Eval automatizado (`specs/eval_precision.py`)** — corre Whisper + GPT-4o-mini sobre el
+  conjunto dorado y reporta % de acierto en monto/categoría/tipo contra lo esperado.
+  **Resultado (10/08/2026): monto ≥96.2%, categoría ≥96.2%, tipo 100%** en el peor escenario
+  de 3 corridas (meta ≥95%).
+- **Prompt afinado (`services/openai_service.py`, `parse_financial_text`)** — montos SIEMPRE
+  en colones ignorando símbolos (`$3,000` = 3000) y lista fija de categorías con mapeo de
+  sinónimos (inventario/mercadería/equipo → Compras; pago a empleado → Personal; entrante
+  por ventas → Ventas). Redujo categoría 57.7% → ≥96.2% sin cambiar de modelo.
+- **Guía de grabación (`specs/guia-grabacion.md`)** — cómo grabar nuevos casos, nombres de
+  archivo y grilla.
+- **Nota `.m4a` (confirmado de nuevo):** Whisper rechaza el codec AAC de las grabadoras de
+  celular; se convierte a WAV 16 kHz mono con ffmpeg (instalado en el contenedor, se pierde
+  al recrearlo) antes de evaluar.
 
 ---
 
@@ -120,6 +141,11 @@ Celery Worker (workers/tasks.py)
 - **03/08/2026:** Descarga de audio de Meta corregida (Bearer Token) y validada con `200 OK` contra servidores reales.
 - **05/08/2026:** App Secret real aplicado, firma HMAC-SHA256 validada matemáticamente, suscripción WABA→App exitosa y **pipeline de IA demostrado de punta a punta sin Meta** (webhook simulado → Whisper → GPT-4o-mini → Google Sheets).
 - **06/08/2026:** **E2E REAL COMPLETO** — nota de voz real → Sheets → respuesta en WhatsApp ("Transacción registrada: Alimentación - 3000 colones"). El "bloqueo por verificación de empresa" era un falso positivo (callback URL del webhook re-registrado). Alcance actual: **PUNTO A** (testeo interno, sandbox, ≤5 destinatarios).
+- **10/08/2026:** **Fase 5.5 — precisión medible.** Conjunto dorado de 30 casos
+  (`specs/golden_set.json` + `specs/golden_audio/` con 29 audios reales) y eval automatizado
+  (`specs/eval_precision.py`). Tras afinar el system prompt, **monto ≥96.2% (meta ≥95%),
+  categoría ≥96.2%, tipo 100%** (peor de 3 corridas). Falta el flujo de corrección por
+  WhatsApp (5.5.3).
 
 ### Timeline
 
@@ -132,10 +158,13 @@ Celery Worker (workers/tasks.py)
 | 5 (Ago 3) | Autenticación Meta: Bearer Token en descarga (3.8.1) + validación descarga 200 OK (3.8.2 a medias) | 🔄 |
 | 6 (Ago 5) | App Secret real + firma HMAC validada + suscripción WABA→App + pipeline de IA demostrado sin Meta (Whisper→GPT→Sheets) | ✅ (parcial 3.8.2) |
 | 7 (Ago 6) | **E2E real completo con Meta (5.4):** callback URL re-registrado (falso positivo del bloqueo), nota de voz real → Sheets → respuesta WhatsApp | ✅ |
+| 8 (Ago 10) | **Fase 5.5:** conjunto dorado (5.5.1, 30 casos/29 audios) + eval automatizado (5.5.2, `specs/eval_precision.py`) — monto ≥96.2%, categoría ≥96.2%, tipo 100% (prompt afinado) | 🔄 (falta 5.5.3 flujo de corrección) |
 
 ### Pendientes para MVP Comercial
 
 - **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción. **✅ COMPLETADO 06/08/2026** — E2E real validado con nota de voz real (falso positivo del bloqueo; ver arriba). Habilita el **PUNTO A** (testeo interno, ≤5 destinatarios en la allowlist).
+- **Flujo de corrección por WhatsApp (5.5.3):** "corrige, eran 6 rojos no 5" → el bot actualiza la última transacción y confirma, en vez de crear una nueva (ADR-0010). Incluye pedir aclaración cuando el audio trae dos flujos (caso 27). **PRÓXIMO.**
+- **Ajustes iterativos de precisión (5.5.4):** cada fallo del eval → test de regresión. Candidato conocido: caso 9 "seis tejas" transcrito a veces "seis cejas".
 - **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
 - **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
 - **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS.
