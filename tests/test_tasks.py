@@ -159,3 +159,100 @@ def test_download_audio_task_whisper_no_rompe_flujo_exitoso() -> None:
 
         result = download_audio_task("12345", "50688888888")
         assert result == EXPECTED_PATH
+
+
+def test_download_audio_task_aclaracion_pide_aclaracion() -> None:
+    """Verifica que un mensaje con dos flujos pide aclaración y NO guarda ni corrige."""
+    with (
+        patch("workers.tasks.transcribir_audio_whisper", return_value="texto"),
+        patch(
+            "workers.tasks.parse_financial_text",
+            return_value={"accion": "aclaracion", "monto": None},
+        ),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+        patch("workers.tasks.update_last_transaction_to_sheet") as mock_update,
+        patch("workers.tasks.httpx.Client"),
+        patch("workers.tasks.os.makedirs"),
+        patch("workers.tasks.open", create=True),
+    ):
+
+        from workers.tasks import download_audio_task
+
+        result = download_audio_task("12345", "50688888888")
+
+        assert result == EXPECTED_PATH
+        mock_sheet.assert_not_called()
+        mock_update.assert_not_called()
+        mock_whatsapp.assert_called_with(
+            to_phone="50688888888",
+            mensaje=(
+                "Vi dos movimientos en tu mensaje y solo registro uno a la vez. "
+                "¿Cuál querés que apunte?"
+            ),
+        )
+
+
+def test_download_audio_task_corregir_actualiza() -> None:
+    """Verifica que una corrección actualiza la última transacción y NO crea una nueva."""
+    data_corregir = {
+        "accion": "corregir",
+        "monto": 6000,
+        "categoria": "Transporte",
+        "tipo_movimiento": "Gasto",
+        "detalle": "Pasajes",
+    }
+    with (
+        patch("workers.tasks.transcribir_audio_whisper", return_value="texto"),
+        patch("workers.tasks.parse_financial_text", return_value=data_corregir),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+        patch("workers.tasks.update_last_transaction_to_sheet", return_value=True) as mock_update,
+        patch("workers.tasks.httpx.Client"),
+        patch("workers.tasks.os.makedirs"),
+        patch("workers.tasks.open", create=True),
+    ):
+
+        from workers.tasks import download_audio_task
+
+        result = download_audio_task("12345", "50688888888")
+
+        assert result == EXPECTED_PATH
+        mock_sheet.assert_not_called()
+        mock_update.assert_called_once_with(data_corregir, "50688888888")
+        mock_whatsapp.assert_called_with(
+            to_phone="50688888888",
+            mensaje="Corregido: Transporte - ₡6000",
+        )
+
+
+def test_download_audio_task_corregir_sin_previa() -> None:
+    """Verifica que si no hay transacción previa, avisa y NO crea una nueva."""
+    with (
+        patch("workers.tasks.transcribir_audio_whisper", return_value="texto"),
+        patch(
+            "workers.tasks.parse_financial_text",
+            return_value={"accion": "corregir", "monto": 6000, "categoria": "Transporte"},
+        ),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+        patch("workers.tasks.update_last_transaction_to_sheet", return_value=False) as mock_update,
+        patch("workers.tasks.httpx.Client"),
+        patch("workers.tasks.os.makedirs"),
+        patch("workers.tasks.open", create=True),
+    ):
+
+        from workers.tasks import download_audio_task
+
+        result = download_audio_task("12345", "50688888888")
+
+        assert result == EXPECTED_PATH
+        mock_sheet.assert_not_called()
+        mock_update.assert_called_once()
+        mock_whatsapp.assert_called_with(
+            to_phone="50688888888",
+            mensaje=(
+                "No encontré una transacción previa tuya para corregir. "
+                "Mandame primero el movimiento."
+            ),
+        )
