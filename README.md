@@ -95,6 +95,22 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
   `eval_precision.py` reporta `accion` y comportamiento. Corrida 11/08/2026: monto 29/30 =
   96.7% (meta alcanzada), correcciones 31–34 reconocen `corregir`, caso 27 `PIDE_ACLARACION`.
   Quedan para 5.5.4: casos 6, 11/20, 22 y correcciones parciales 32/34 (categoria/tipo en null).
+- **Validado E2E real en WhatsApp (11/08/2026)** — con 2 notas de voz reales, la 2ª
+  ("corrige, no eran dos, eran 5") **actualizó la última fila del teléfono en vez de crear
+  una nueva** → respuesta "Corregido" recibida en WhatsApp. Requisito operativo descubierto:
+  tras cambiar de rama/archivos hay que **reiniciar los contenedores**
+  (`docker compose restart app worker`); el volumen `.:/code` no recarga los módulos en memoria.
+- **2 bugs de producción corregidos en el camino:**
+  1. `tipo_movimiento: null` (GPT Structured Outputs) rompía `tipo.lower()` en Sheets →
+     default `or "Gasto"` en `append_transaction_to_sheet` y `update_last_transaction_to_sheet`
+     (`services/sheets_service.py`).
+  2. `Event loop is closed` al enviar la 2ª respuesta de WhatsApp: el `httpx.AsyncClient`
+     global se ataba al event loop de la 1ª tarea (que `asyncio.run()` cierra al terminar).
+     Solución: cliente creado **por llamada** (`async with httpx.AsyncClient()`) en
+     `services/whatsapp_service.py`.
+- **QA verificado sobre los 2 archivos** (autorizado por el dueño): pytest **39/39 passed** ·
+  ruff **All checks passed** · black **2 files unchanged** · mypy **no issues in 2 source files**.
+  Listos para subir al repo.
 
 ---
 
@@ -164,12 +180,16 @@ Celery Worker (workers/tasks.py)
   (`specs/golden_set.json` + `specs/golden_audio/` con 29 audios reales) y eval automatizado
   (`specs/eval_precision.py`). Tras afinar el system prompt, **monto ≥96.2% (meta ≥95%),
   categoría ≥96.2%, tipo 100%** (peor de 3 corridas).
-- **11/08/2026:** **Fase 5.5.3 — flujo de corrección COMPLETO (8/8 pasos).** Columna
-  "teléfono" en la hoja, intención `registrar/corregir/aclaracion` en la IA, orquestación,
-  `update_last_transaction_to_sheet`, system prompt, mensajes de confirmación/aclaración,
-  eval ampliado (casos 31–34 + audio) y **tests actualizados: pytest 39/39 · ruff 0 · black
-  sin cambios · mypy sin issues**. Eval en contenedor: monto 96.7%, casos 31–34 reconocen
-  `corregir`, caso 27 `PIDE_ACLARACION`. Falta 5.5.4 (ajustes iterativos) y 5.5.5 (suite en CI).
+- **11/08/2026:** **Fase 5.5.3 — flujo de corrección COMPLETO (8/8 pasos) y validado E2E real
+  en WhatsApp.** Columna "teléfono" en la hoja, intención `registrar/corregir/aclaracion` en
+  la IA, orquestación, `update_last_transaction_to_sheet`, system prompt, mensajes de
+  confirmación/aclaración, eval ampliado (casos 31–34 + audio) y **tests: pytest 39/39 ·
+  ruff 0 · black sin cambios · mypy sin issues**. Eval en contenedor: monto 96.7%, casos
+  31–34 reconocen `corregir`, caso 27 `PIDE_ACLARACION`. **E2E real:** la 2ª nota de voz
+  ("corrige, no eran dos, eran 5") actualizó la última fila del teléfono en vez de crear una
+  nueva. **2 bugs corregidos:** `tipo_movimiento: null` → `or "Gasto"` (sheets) y
+  `AsyncClient` global → por llamada (whatsapp); ambos QA verificados (39/39, ruff, black,
+  mypy). Falta 5.5.4 (ajustes iterativos) y 5.5.5 (suite en CI).
 
 ### Timeline
 
@@ -182,12 +202,12 @@ Celery Worker (workers/tasks.py)
 | 5 (Ago 3) | Autenticación Meta: Bearer Token en descarga (3.8.1) + validación descarga 200 OK (3.8.2 a medias) | 🔄 |
 | 6 (Ago 5) | App Secret real + firma HMAC validada + suscripción WABA→App + pipeline de IA demostrado sin Meta (Whisper→GPT→Sheets) | ✅ (parcial 3.8.2) |
 | 7 (Ago 6) | **E2E real completo con Meta (5.4):** callback URL re-registrado (falso positivo del bloqueo), nota de voz real → Sheets → respuesta WhatsApp | ✅ |
-| 8 (Ago 10-11) | **Fase 5.5:** conjunto dorado (5.5.1, 30 casos/29 audios) + eval automatizado (5.5.2, `specs/eval_precision.py`) — monto ≥96.2% (prompt afinado) · **5.5.3 flujo de corrección 8/8 pasos el 11/08 (columna teléfono, accion registrar/corregir/aclaracion, pytest 39/39)** | 🔄 (falta 5.5.4 ajustes + 5.5.5 suite en CI) |
+| 8 (Ago 10-11) | **Fase 5.5:** conjunto dorado (5.5.1, 30 casos/29 audios) + eval automatizado (5.5.2, `specs/eval_precision.py`) — monto ≥96.2% (prompt afinado) · **5.5.3 flujo de corrección 8/8 pasos + E2E real en WhatsApp el 11/08 (columna teléfono, accion registrar/corregir/aclaracion, 2 bugs corregidos y QA 39/39)** | 🔄 (falta 5.5.4 ajustes + 5.5.5 suite en CI) |
 
 ### Pendientes para MVP Comercial
 
 - **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción. **✅ COMPLETADO 06/08/2026** — E2E real validado con nota de voz real (falso positivo del bloqueo; ver arriba). Habilita el **PUNTO A** (testeo interno, ≤5 destinatarios en la allowlist).
-- **Flujo de corrección por WhatsApp (5.5.3):** "corrige, eran 6 rojos no 5" → el bot actualiza la última transacción y confirma, en vez de crear una nueva (ADR-0010). Incluye pedir aclaración cuando el audio trae dos flujos (caso 27). **✅ COMPLETADO 11/08/2026** (8/8 pasos, pytest 39/39).
+- **Flujo de corrección por WhatsApp (5.5.3):** "corrige, eran 6 rojos no 5" → el bot actualiza la última transacción y confirma, en vez de crear una nueva (ADR-0010). Incluye pedir aclaración cuando el audio trae dos flujos (caso 27). **✅ COMPLETADO y validado E2E real 11/08/2026** (8/8 pasos, pytest 39/39; la 2ª nota de voz corrigió la última fila del teléfono en WhatsApp).
 - **Ajustes iterativos de precisión (5.5.4):** cada fallo del eval → test de regresión. Brechas del eval 11/08: casos 6, 11/20, 22 y correcciones parciales 32/34. Candidato conocido: caso 9 "seis tejas" transcrito a veces "seis cejas".
 - **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
 - **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
