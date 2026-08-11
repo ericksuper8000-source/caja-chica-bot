@@ -40,7 +40,7 @@ async def _procesar_pipeline(file_path: str, sender_phone: str) -> str:
         )
         return file_path
 
-    await append_transaction_to_sheet(transaction_data)
+    await append_transaction_to_sheet(transaction_data, sender_phone)
     await enviar_mensaje_whatsapp(
         to_phone=sender_phone,
         mensaje=(

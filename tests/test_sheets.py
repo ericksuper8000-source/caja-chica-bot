@@ -42,7 +42,7 @@ async def test_append_transaction_gasto_success(mock_get_sheets_client):
     }
 
     # Ejecutar la función (Debe ser asíncrona usando run_in_executor por debajo)
-    result = await append_transaction_to_sheet(fake_transaction)
+    result = await append_transaction_to_sheet(fake_transaction, "50688888888")
 
     assert result is True
     mock_client.open_by_key.assert_called_once()
@@ -51,10 +51,11 @@ async def test_append_transaction_gasto_success(mock_get_sheets_client):
     # Validar que los datos enviados a la fila de Google Sheets sean correctos
     called_args = mock_worksheet.append_row.call_args[0][0]
 
-    # Estructura esperada: [Fecha/Timestamp, Monto, Categoría, Detalle]
+    # Estructura esperada: [Fecha/Timestamp, Monto, Categoría, Detalle, Teléfono]
     assert called_args[1] == -4500  # Transformado a negativo por ser un Gasto
     assert called_args[2] == "Alimentación"
     assert called_args[3] == "Almuerzo ejecutivo"
+    assert called_args[4] == "50688888888"
 
 
 @pytest.mark.anyio
@@ -76,7 +77,7 @@ async def test_append_transaction_api_error(mock_get_sheets_client):
     }
 
     # Ejecutar la función
-    result = await append_transaction_to_sheet(fake_transaction)
+    result = await append_transaction_to_sheet(fake_transaction, "50688888888")
 
     # El servicio debe capturar el error y retornar False en lugar de tirar un crash
     assert result is False
