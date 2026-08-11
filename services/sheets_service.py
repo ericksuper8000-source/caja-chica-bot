@@ -77,7 +77,7 @@ async def append_transaction_to_sheet(transaction_data: dict[str, Any], sender_p
     try:
         fecha_actual = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         monto = transaction_data.get("monto", 0)
-        tipo = transaction_data.get("tipo_movimiento", "Gasto")
+        tipo = transaction_data.get("tipo_movimiento") or "Gasto"
 
         if tipo.lower() == "gasto" and monto > 0:
             monto = -monto
@@ -115,7 +115,7 @@ async def update_last_transaction_to_sheet(
 
     try:
         monto = transaction_data.get("monto", 0)
-        tipo = transaction_data.get("tipo_movimiento", "Gasto")
+        tipo = transaction_data.get("tipo_movimiento") or "Gasto"
 
         if tipo.lower() == "gasto" and monto > 0:
             monto = -monto
