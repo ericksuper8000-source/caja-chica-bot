@@ -3,7 +3,11 @@ from unittest.mock import MagicMock, patch
 import gspread
 import pytest
 
-from services.sheets_service import append_transaction_to_sheet, get_sheets_client
+from services.sheets_service import (
+    append_transaction_to_sheet,
+    get_sheets_client,
+    update_last_transaction_to_sheet,
+)
 
 
 @patch("services.sheets_service.gspread.service_account")
@@ -56,6 +60,71 @@ async def test_append_transaction_gasto_success(mock_get_sheets_client):
     assert called_args[2] == "Alimentación"
     assert called_args[3] == "Almuerzo ejecutivo"
     assert called_args[4] == "50688888888"
+
+
+@pytest.mark.anyio
+@patch("services.sheets_service.get_sheets_client")
+async def test_update_last_transaction_success(mock_get_sheets_client):
+    """Prueba que la corrección localice la última fila del teléfono y actualice B:E."""
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.get_worksheet.return_value = mock_worksheet
+
+    # Columna de teléfono: encabezado + filas de otros usuarios + la del usuario (filas 3 y 5)
+    mock_worksheet.col_values.return_value = [
+        "teléfono",
+        "50611111111",
+        "50688888888",
+        "50611111111",
+        "50688888888",
+    ]
+
+    fake_transaction = {
+        "monto": 6000,
+        "categoria": "Transporte",
+        "tipo_movimiento": "Gasto",
+        "detalle": "Pasajes",
+    }
+
+    result = await update_last_transaction_to_sheet(fake_transaction, "50688888888")
+
+    assert result is True
+    # Debe actualizar la última coincidencia (fila 5), columnas B:E, sin tocar la fecha
+    called_args = mock_worksheet.update.call_args[0]
+    assert called_args[0] == "B5:E5"
+    assert called_args[1] == [[-6000, "Transporte", "Pasajes", "50688888888"]]
+
+
+@pytest.mark.anyio
+@patch("services.sheets_service.get_sheets_client")
+async def test_update_last_transaction_sin_previas(mock_get_sheets_client):
+    """Prueba que si el usuario no tiene transacciones previas, devuelve False sin actualizar."""
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.get_worksheet.return_value = mock_worksheet
+
+    # Solo encabezado y filas de otros usuarios
+    mock_worksheet.col_values.return_value = ["teléfono", "50611111111", "50622222222"]
+
+    fake_transaction = {
+        "monto": 6000,
+        "categoria": "Transporte",
+        "tipo_movimiento": "Gasto",
+        "detalle": "Pasajes",
+    }
+
+    result = await update_last_transaction_to_sheet(fake_transaction, "50688888888")
+
+    assert result is False
+    mock_worksheet.update.assert_not_called()
 
 
 @pytest.mark.anyio

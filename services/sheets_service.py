@@ -41,6 +41,29 @@ def _sync_append_row(spreadsheet_id: str, row_values: list[Any]) -> None:
     worksheet.append_row(row_values, value_input_option=ValueInputOption.user_entered)
 
 
+def _sync_update_last_row(spreadsheet_id: str, sender_phone: str, row_values: list[Any]) -> None:
+    """
+    Operación síncrona: localiza la última fila cuyo teléfono coincida con el remitente
+    y reescribe sus celdas (monto, categoría, detalle y teléfono) conservando la fecha.
+    Lanza LookupError si el usuario no tiene transacciones previas.
+    """
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    worksheet = spreadsheet.get_worksheet(0)
+
+    phone_values = worksheet.col_values(5)
+    matches = [i for i, phone in enumerate(phone_values, start=1) if phone == sender_phone]
+    if not matches:
+        raise LookupError(f"sin transacciones previas para {sender_phone}")
+
+    last_row = matches[-1]
+    worksheet.update(
+        f"B{last_row}:E{last_row}",
+        [row_values],
+        value_input_option=ValueInputOption.user_entered,
+    )
+
+
 async def append_transaction_to_sheet(transaction_data: dict[str, Any], sender_phone: str) -> bool:
     """
     Inserta una nueva fila en Google Sheets de manera asíncrona.
@@ -77,4 +100,44 @@ async def append_transaction_to_sheet(transaction_data: dict[str, Any], sender_p
         return False
     except Exception as e:
         logger.error(f"Error inesperado en el servicio de Sheets: {e}")
+        return False
+
+
+async def update_last_transaction_to_sheet(
+    transaction_data: dict[str, Any], sender_phone: str
+) -> bool:
+    """
+    Actualiza la última transacción del remitente con los datos corregidos
+    (flujo de corrección 5.5.3, ADR-0010). Devuelve True si se actualizó;
+    False si el usuario no tiene transacciones previas o hubo un error de API.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+
+    try:
+        monto = transaction_data.get("monto", 0)
+        tipo = transaction_data.get("tipo_movimiento", "Gasto")
+
+        if tipo.lower() == "gasto" and monto > 0:
+            monto = -monto
+
+        row_values = [
+            monto,
+            transaction_data.get("categoria", "Otros"),
+            transaction_data.get("detalle", ""),
+            sender_phone,
+        ]
+
+        await asyncio.to_thread(_sync_update_last_row, spreadsheet_id, sender_phone, row_values)
+
+        logger.info(f"Transacción corregida en Sheets para {sender_phone}: {row_values}")
+        return True
+
+    except LookupError as error:
+        logger.info(f"No hay transacción previa del usuario {sender_phone}: {error}")
+        return False
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al corregir en Google Sheets: {error}")
+        return False
+    except Exception as e:
+        logger.error(f"Error inesperado en el servicio de Sheets (corregir): {e}")
         return False

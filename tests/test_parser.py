@@ -41,6 +41,83 @@ async def test_parse_financial_text_success():
 
 
 @pytest.mark.anyio
+async def test_detectar_intencion_registrar():
+    """Valida que la IA clasifica un mensaje normal como intención 'registrar'."""
+    mock_transaction_data = {
+        "accion": "registrar",
+        "monto": 4500,
+        "categoria": "Alimentación",
+        "tipo_movimiento": "Gasto",
+        "detalle": "Almuerzo",
+    }
+    mock_response = AsyncMock()
+    mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
+
+    with patch(
+        "services.openai_service.openai_client.beta.chat.completions.parse",
+        new_callable=AsyncMock,
+    ) as mock_parse:
+        mock_parse.return_value = mock_response
+
+        resultado = await parse_financial_text(text_input="Gasté 4500 en el almuerzo")
+
+        assert resultado["accion"] == "registrar"
+        assert resultado["monto"] == 4500
+
+
+@pytest.mark.anyio
+async def test_detectar_intencion_corregir():
+    """Valida que la IA clasifica una corrección como 'corregir' y llena el dato corregido."""
+    mock_transaction_data = {
+        "accion": "corregir",
+        "monto": 6000,
+        "categoria": "Transporte",
+        "tipo_movimiento": "Gasto",
+        "detalle": "Pasajes",
+    }
+    mock_response = AsyncMock()
+    mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
+
+    with patch(
+        "services.openai_service.openai_client.beta.chat.completions.parse",
+        new_callable=AsyncMock,
+    ) as mock_parse:
+        mock_parse.return_value = mock_response
+
+        resultado = await parse_financial_text(text_input="Corrige, eran 6 rojos en pasajes no 5")
+
+        assert resultado["accion"] == "corregir"
+        assert resultado["monto"] == 6000
+
+
+@pytest.mark.anyio
+async def test_detectar_intencion_aclaracion():
+    """Valida que la IA clasifica un mensaje con dos flujos como 'aclaracion' y no llena datos."""
+    mock_transaction_data = {
+        "accion": "aclaracion",
+        "monto": None,
+        "categoria": None,
+        "tipo_movimiento": None,
+        "detalle": None,
+    }
+    mock_response = AsyncMock()
+    mock_response.choices = [AsyncMock(message=AsyncMock(parsed=mock_transaction_data))]
+
+    with patch(
+        "services.openai_service.openai_client.beta.chat.completions.parse",
+        new_callable=AsyncMock,
+    ) as mock_parse:
+        mock_parse.return_value = mock_response
+
+        resultado = await parse_financial_text(
+            text_input="Recibí 2000 de un cliente y gasté 500 en el bus"
+        )
+
+        assert resultado["accion"] == "aclaracion"
+        assert resultado["monto"] is None
+
+
+@pytest.mark.anyio
 async def test_parse_financial_text_invalid_input():
     """
     Valida el comportamiento del sistema cuando el texto no contiene
