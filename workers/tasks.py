@@ -11,7 +11,10 @@ from services.openai_service import (
     parse_financial_text,
     transcribir_audio_whisper,
 )
-from services.sheets_service import append_transaction_to_sheet
+from services.sheets_service import (
+    append_transaction_to_sheet,
+    update_last_transaction_to_sheet,
+)
 from services.whatsapp_service import enviar_mensaje_whatsapp
 from workers.celery_app import celery_app
 
@@ -35,6 +38,47 @@ async def _procesar_pipeline(file_path: str, sender_phone: str) -> str:
             to_phone=sender_phone,
             mensaje=(
                 "No encontré datos financieros en tu mensaje. Intentá de nuevo "
+                "indicando monto, categoría y si es gasto o ingreso."
+            ),
+        )
+        return file_path
+
+    accion = transaction_data.get("accion", "registrar")
+
+    if accion == "aclaracion":
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone,
+            mensaje=(
+                "Vi dos movimientos en tu mensaje y solo registro uno a la vez. "
+                "¿Cuál querés que apunte?"
+            ),
+        )
+        return file_path
+
+    if accion == "corregir":
+        corregido = await update_last_transaction_to_sheet(transaction_data, sender_phone)
+        if corregido:
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone,
+                mensaje=(
+                    f"Corregido: {transaction_data['categoria']} - " f"₡{transaction_data['monto']}"
+                ),
+            )
+        else:
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone,
+                mensaje=(
+                    "No encontré una transacción previa tuya para corregir. "
+                    "Mandame primero el movimiento."
+                ),
+            )
+        return file_path
+
+    if transaction_data.get("monto") is None:
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone,
+            mensaje=(
+                "No encontré un monto en tu mensaje. Intentá de nuevo "
                 "indicando monto, categoría y si es gasto o ingreso."
             ),
         )

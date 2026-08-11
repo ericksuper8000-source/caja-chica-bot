@@ -19,14 +19,30 @@ openai_client = AsyncOpenAI(api_key=_api_key)
 # 1. ESQUEMAS DE ENTORNO Y MODELOS ESTRUCTURADOS
 # ==========================================
 class TransactionResponse(BaseModel):
-    monto: int = Field(description="Monto numérico exacto de la transacción financiera.")
-    categoria: str = Field(
-        description="Categoría del movimiento (ej: Alimentación, Transporte, Servicios)."
+    accion: Literal["registrar", "corregir", "aclaracion"] = Field(
+        default="registrar",
+        description=(
+            "Intención del mensaje: 'registrar' (transacción normal), 'corregir' "
+            "(corrección de una transacción previa) o 'aclaracion' (mensaje ambiguo "
+            "con dos flujos; en ese caso los demás campos van en null)."
+        ),
     )
-    tipo_movimiento: Literal["Gasto", "Ingreso"] = Field(
-        description="El tipo de flujo financiero estrictamente."
+    monto: int | None = Field(
+        default=None,
+        description="Monto numérico exacto (null si accion='aclaracion').",
     )
-    detalle: str = Field(description="Descripción concisa o motivo de la transacción.")
+    categoria: str | None = Field(
+        default=None,
+        description="Categoría del movimiento (ej: Alimentación, Transporte, Servicios).",
+    )
+    tipo_movimiento: Literal["Gasto", "Ingreso"] | None = Field(
+        default=None,
+        description="El tipo de flujo financiero estrictamente.",
+    )
+    detalle: str | None = Field(
+        default=None,
+        description="Descripción concisa o motivo de la transacción.",
+    )
 
 
 # ==========================================
@@ -76,9 +92,16 @@ async def parse_financial_text(text_input: str) -> dict[str, Any] | None:
         "- TODOS los montos van en COLONES (Costa Rica). Nunca conviertas a dólares.\n"
         "- Ignora símbolos de moneda y separadores de miles: '$3,000' o '$ 3.000' = 3000 "
         "colones; '8,000' = 8000. El monto final SIEMPRE es un entero sin símbolos.\n"
-        "- Si el monto aparece en forma de dos flujos separados (un ingreso Y un gasto en el "
-        "mismo mensaje), NO registres ninguno: retorna nulo (el sistema pedirá aclaración al "
-        "usuario, pues solo se registra un movimiento a la vez).\n"
+        "Reglas de intención (campo 'accion'):\n"
+        "- 'registrar': el mensaje describe UNA transacción financiera normal (un solo gasto "
+        "o ingreso). Llena los campos monto, categoria, tipo_movimiento y detalle.\n"
+        "- 'corregir': el mensaje corrige una transacción previa (palabras como 'corrige', "
+        "'corrección', 'cambia', 'era X no Y', 'no eran 5 eran 6'). Llena los campos con el "
+        "dato CORREGIDO (ej: 'eran 6 rojos no 5' → monto=6000).\n"
+        "- 'aclaracion': el mensaje es ambiguo o trae dos flujos separados (un ingreso Y un "
+        "gasto, o dos montos en el mismo mensaje). Retorna accion='aclaracion' y deja los "
+        "demás campos en null (el sistema pedirá aclaración al usuario, pues solo se registra "
+        "un movimiento a la vez).\n"
         "Reglas estrictas de categoría:\n"
         "- Usa SIEMPRE exactamente una de estas categorías: Alimentación, Transporte, "
         "Servicios, Compras, Ventas, Personal, Trabajo, Otros.\n"
