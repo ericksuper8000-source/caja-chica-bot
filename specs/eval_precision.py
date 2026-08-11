@@ -22,8 +22,9 @@ Salida:
 Casos especiales:
     - esperado = null            (casos 21, 22: sin monto): el bot debe NO crear transaccion.
     - esperado = PEDIR_ACLARACION (caso 27: dos flujos en un audio): el bot debe pedir aclaracion.
-      Estos casos NO cuentan en el % de monto (no hay monto esperado); se reportan por separado
-      como 'comportamiento' pero SI se listan en la tabla para revisar a mano.
+    - esperado con "accion"      (casos de correccion 31+: el bot debe detectar 'corregir').
+      Estos casos NO cuentan en el % de monto (no hay monto esperado en algunos); se reportan
+      por separado como 'comportamiento' pero SI se listan en la tabla para revisar a mano.
 """
 
 import asyncio
@@ -66,10 +67,17 @@ def convertir_a_wav(ruta_audio: str) -> str:
 
 
 def comparar(obtenido: dict | None, esperado: dict) -> dict[str, str | None]:
-    """Compara lo que extrajo el bot contra la respuesta correcta. """
-    resultado: dict[str, str | None] = {"monto": None, "categoria": None, "tipo": None}
+    """Compara lo que extrajo el bot contra la respuesta correcta."""
+    resultado: dict[str, str | None] = {
+        "accion": None,
+        "monto": None,
+        "categoria": None,
+        "tipo": None,
+    }
     if not obtenido:
         return resultado
+    if "accion" in esperado:
+        resultado["accion"] = "OK" if obtenido.get("accion") == esperado["accion"] else "FALLO"
     if "monto" in esperado:
         resultado["monto"] = "OK" if obtenido.get("monto") == esperado["monto"] else "FALLO"
     if "categoria" in esperado:
@@ -84,7 +92,7 @@ def comparar(obtenido: dict | None, esperado: dict) -> dict[str, str | None]:
 
 
 async def evaluar_caso(caso: dict) -> dict:
-    """Evalua un caso: convierte, transcribe, extrae y compara. """
+    """Evalua un caso: convierte, transcribe, extrae y compara."""
     audio_name = caso.get("audio")
     ruta_audio = os.path.join(GOLDEN_AUDIO_DIR, audio_name)
     if not os.path.exists(ruta_audio):
@@ -120,7 +128,7 @@ def formatear_mensaje(transcripcion: str | None) -> str:
 
 
 def imprimir_resumen(resultados: list[dict]) -> None:
-    """Imprime la tabla y el % de acierto en monto. """
+    """Imprime la tabla y el % de acierto en monto."""
     print("\n" + "=" * 78)
     print("RESULTADOS - CASO POR CASO")
     print("=" * 78)
@@ -141,34 +149,65 @@ def imprimir_resumen(resultados: list[dict]) -> None:
         print(f"{caso_id:<5} {formatear_mensaje(r.get('transcripcion'))}")
 
         if esperado is None:
-            ok_comportamiento = "SIN_CREAR" if r.get("obtenido") is None else "CREO_TRANSACCION"
+            obtenido = r.get("obtenido")
+            crea = (
+                bool(obtenido)
+                and obtenido.get("accion", "registrar") == "registrar"
+                and obtenido.get("monto") is not None
+            )
+            ok_comportamiento = "SIN_CREAR" if not crea else "CREO_TRANSACCION"
             print(f"       Comportamiento esperado: {r.get('objetivo', '')}")
             print(f"       Bot: {ok_comportamiento} - REVISION MANUAL")
             continue
 
         if esperado == "PEDIR_ACLARACION":
-            ok = "PIDE_ACLARACION" if r.get("obtenido") is None else "CREO_TRANSACCION"
+            obtenido = r.get("obtenido")
+            pide = obtenido is None or obtenido.get("accion") == "aclaracion"
+            ok = "PIDE_ACLARACION" if pide else "CREO_TRANSACCION"
             print(f"       Esperado: pedir aclaracion | Bot: {ok} - REVISION MANUAL")
             continue
 
-        for campo, llave in (("monto", "monto"), ("categoria", "categoria"), ("tipo", "tipo_movimiento")):
+        if "accion" in esperado and res.get("accion") is not None:
+            print(
+                f"       accion:    {res['accion']:<6} esperado={esperado['accion']!r} "
+                f"bot={r['obtenido'].get('accion') if r['obtenido'] else None!r}"
+            )
+
+        for campo, llave in (
+            ("monto", "monto"),
+            ("categoria", "categoria"),
+            ("tipo", "tipo_movimiento"),
+        ):
             if res.get(campo) is None:
                 continue
-            conteo = {"monto": conteo_monto, "categoria": conteo_cat, "tipo": conteo_tipo}[campo]
+            conteo = {
+                "monto": conteo_monto,
+                "categoria": conteo_cat,
+                "tipo": conteo_tipo,
+            }[campo]
             conteo["total"] += 1
             if res[campo] == "OK":
                 conteo["ok"] += 1
-            print(f"       {campo:<10} {res[campo]:<6} esperado={esperado[llave]!r} "
-                  f"bot={r['obtenido'].get(llave) if r['obtenido'] else None!r}")
+            print(
+                f"       {campo:<10} {res[campo]:<6} esperado={esperado[llave]!r} "
+                f"bot={r['obtenido'].get(llave) if r['obtenido'] else None!r}"
+            )
 
     print("\n" + "=" * 78)
     print("PUNTAJE")
     print("=" * 78)
-    pct = lambda c: f"{c['ok']}/{c['total']} = {100.0*c['ok']/c['total']:.1f}%" if c["total"] else "n/a"
+
+    def pct(c: dict) -> str:
+        if not c["total"]:
+            return "n/a"
+        return f"{c['ok']}/{c['total']} = {100.0 * c['ok'] / c['total']:.1f}%"
+
     print(f"  Monto:     {pct(conteo_monto)}   (meta: >=95%)")
     print(f"  Categoria: {pct(conteo_cat)}")
     print(f"  Tipo:      {pct(conteo_tipo)}")
-    print(f"\n  {'META ALCANZADA en monto' if conteo_monto['total'] and 100.0*conteo_monto['ok']/conteo_monto['total'] >= 95 else 'META NO alcanzada en monto'}")
+
+    meta_monto = conteo_monto["total"] and 100.0 * conteo_monto["ok"] / conteo_monto["total"] >= 95
+    print(f"\n  {'META ALCANZADA en monto' if meta_monto else 'META NO alcanzada en monto'}")
     print("=" * 78)
 
 
