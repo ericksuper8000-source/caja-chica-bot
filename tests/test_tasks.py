@@ -47,7 +47,7 @@ def test_download_audio_task_exito() -> None:
                     "monto": 5000,
                 },
             ),
-            patch("workers.tasks.append_transaction_to_sheet"),
+            patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
             patch("workers.tasks.enviar_mensaje_whatsapp", create=True) as mock_whatsapp,
         ):
 
@@ -84,6 +84,9 @@ def test_download_audio_task_exito() -> None:
             mock_whatsapp.assert_called_once()
             call_kwargs = mock_whatsapp.call_args.kwargs
             assert call_kwargs["to_phone"] == test_sender
+
+            # Verificamos que la transacción se guardó con el teléfono del remitente
+            mock_sheet.assert_called_once_with({"categoria": "comida", "monto": 5000}, test_sender)
 
 
 def test_download_audio_task_whisper_falla() -> None:
