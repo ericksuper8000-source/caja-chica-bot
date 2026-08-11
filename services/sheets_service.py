@@ -41,9 +41,13 @@ def _sync_append_row(spreadsheet_id: str, row_values: list[Any]) -> None:
     worksheet.append_row(row_values, value_input_option=ValueInputOption.user_entered)
 
 
-async def append_transaction_to_sheet(transaction_data: dict[str, Any]) -> bool:
+async def append_transaction_to_sheet(transaction_data: dict[str, Any], sender_phone: str) -> bool:
     """
     Inserta una nueva fila en Google Sheets de manera asíncrona.
+
+    La fila guarda también el teléfono del remitente (columna "teléfono"),
+    base para localizar la última transacción del usuario en el flujo de
+    corrección (5.5.3) y para la identidad por teléfono (6.1).
     """
     spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
 
@@ -60,6 +64,7 @@ async def append_transaction_to_sheet(transaction_data: dict[str, Any]) -> bool:
             monto,
             transaction_data.get("categoria", "Otros"),
             transaction_data.get("detalle", ""),
+            sender_phone,
         ]
 
         await asyncio.to_thread(_sync_append_row, spreadsheet_id, row_values)
