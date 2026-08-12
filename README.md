@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 11/08/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 12/08/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -95,6 +95,7 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
   `eval_precision.py` reporta `accion` y comportamiento. Corrida 11/08/2026: monto 29/30 =
   96.7% (meta alcanzada), correcciones 31–34 reconocen `corregir`, caso 27 `PIDE_ACLARACION`.
   Quedan para 5.5.4: casos 6, 11/20, 22 y correcciones parciales 32/34 (categoria/tipo en null).
+  → **Resueltos el 12/08/2026 (ver Fase 5.5.4 abajo).**
 - **Validado E2E real en WhatsApp (11/08/2026)** — con 2 notas de voz reales, la 2ª
   ("corrige, no eran dos, eran 5") **actualizó la última fila del teléfono en vez de crear
   una nueva** → respuesta "Corregido" recibida en WhatsApp. Requisito operativo descubierto:
@@ -111,6 +112,27 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
 - **QA verificado sobre los 2 archivos** (autorizado por el dueño): pytest **39/39 passed** ·
   ruff **All checks passed** · black **2 files unchanged** · mypy **no issues in 2 source files**.
   Listos para subir al repo.
+
+### Ajustes iterativos de precisión (Fase 5.5.4, 12/08/2026)
+- **Trampas de regresión A–G (`tests/test_precision_regresion.py`)** — blindan las reglas de
+  negocio decididas con el dueño:
+  - **A** corrección = registro COMPLETO (nunca null) · **B** frase sin monto → NO se crea
+    transacción (`aclaracion`) · **C** los modismos SIEMPRE resuelven a colones (monto nunca null
+    si hay dinero) · **D** gastos de movilidad (parqueo/peaje/gasolina) = Transporte vs. ingreso
+    por prestar un servicio = Servicios · **E** limitación aceptada de Whisper ("seis tejas" →
+    "seis cejas"; con transcripción correcta la lógica acierta) · **F** un modismo con número ES
+    un monto y anula el `aclaracion` por falta de monto ("dos tucanes" ≠ dos flujos) · **G**
+    "Otros" solo como último recurso (Servicios/Ventas se prefieren).
+- **`SYSTEM_PROMPT_PARSE` expuesto** — el system prompt ahora vive en
+  `services/openai_service.py:54` como constante, para que las trampas verifiquen el contrato
+  del prompt (TDD de prompt: si la regla se debilita, la trampa se enciende en rojo).
+- **Eval real en el contenedor (3 corridas, 12/08/2026): monto 100% · categoría 100% · tipo
+  100%** (peor de 3 = 100%) sobre el conjunto dorado de 34 casos / 33 audios. Meta de 5.5.2
+  (≥95%) superada con holgura. Confirmados en vida real: caso 22 `SIN_CREAR`, caso 27
+  `PIDE_ACLARACION`, casos 31–34 con registro COMPLETO.
+- **QA: pytest 46/46 · ruff 0 · black sin cambios · mypy success (15 files).**
+- **Pendiente 5.5.5:** integrar los tests de regresión a la CI; el eval real (audios + API de
+  OpenAI) se mantiene como paso manual por costo de API.
 
 ---
 
@@ -171,7 +193,7 @@ Celery Worker (workers/tasks.py)
 
 ## Estado del Proyecto
 
-- **39 tests, 39 passed** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde · `mypy --strict` en verde (05/08/2026)
+- **46 tests, 46 passed** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde · `mypy --strict` en verde (05/08/2026)
 - CI/CD: GitHub Actions + GitLab CI (pipelines idénticos)
 - **03/08/2026:** Descarga de audio de Meta corregida (Bearer Token) y validada con `200 OK` contra servidores reales.
 - **05/08/2026:** App Secret real aplicado, firma HMAC-SHA256 validada matemáticamente, suscripción WABA→App exitosa y **pipeline de IA demostrado de punta a punta sin Meta** (webhook simulado → Whisper → GPT-4o-mini → Google Sheets).
@@ -179,7 +201,8 @@ Celery Worker (workers/tasks.py)
 - **10/08/2026:** **Fase 5.5 — precisión medible.** Conjunto dorado de 30 casos
   (`specs/golden_set.json` + `specs/golden_audio/` con 29 audios reales) y eval automatizado
   (`specs/eval_precision.py`). Tras afinar el system prompt, **monto ≥96.2% (meta ≥95%),
-  categoría ≥96.2%, tipo 100%** (peor de 3 corridas).
+  categoría ≥96.2%, tipo 100%** (peor de 3 corridas). (El conjunto dorado creció a **34 casos /
+  33 audios** el 11/08 con los casos de corrección 31–34.)
 - **11/08/2026:** **Fase 5.5.3 — flujo de corrección COMPLETO (8/8 pasos) y validado E2E real
   en WhatsApp.** Columna "teléfono" en la hoja, intención `registrar/corregir/aclaracion` en
   la IA, orquestación, `update_last_transaction_to_sheet`, system prompt, mensajes de
@@ -189,7 +212,14 @@ Celery Worker (workers/tasks.py)
   ("corrige, no eran dos, eran 5") actualizó la última fila del teléfono en vez de crear una
   nueva. **2 bugs corregidos:** `tipo_movimiento: null` → `or "Gasto"` (sheets) y
   `AsyncClient` global → por llamada (whatsapp); ambos QA verificados (39/39, ruff, black,
-  mypy). Falta 5.5.4 (ajustes iterativos) y 5.5.5 (suite en CI).
+  mypy). → **5.5.4 completado el 12/08 (abajo); falta solo 5.5.5 (suite en CI).**
+- **12/08/2026:** **Fase 5.5.4 — ajustes iterativos COMPLETOS.** 7 trampas de regresión A–G en
+  `tests/test_precision_regresion.py` + 4 reglas al `SYSTEM_PROMPT_PARSE` (corrección = registro
+  completo, sin monto no se crea transacción, modismos nunca null, movilidad/Transporte vs.
+  Servicios, "Otros" solo último recurso, modismo con número anula aclaración). **Eval real en
+  el contenedor: monto/categoría/tipo 100% (peor de 3 corridas)** con el conjunto dorado de 34
+  casos / 33 audios. **Tests: pytest 46/46 · ruff 0 · black sin cambios · mypy success
+  (15 files).** Pendiente: **5.5.5** (suite de precisión en CI).
 
 ### Timeline
 
@@ -202,13 +232,18 @@ Celery Worker (workers/tasks.py)
 | 5 (Ago 3) | Autenticación Meta: Bearer Token en descarga (3.8.1) + validación descarga 200 OK (3.8.2 a medias) | 🔄 |
 | 6 (Ago 5) | App Secret real + firma HMAC validada + suscripción WABA→App + pipeline de IA demostrado sin Meta (Whisper→GPT→Sheets) | ✅ (parcial 3.8.2) |
 | 7 (Ago 6) | **E2E real completo con Meta (5.4):** callback URL re-registrado (falso positivo del bloqueo), nota de voz real → Sheets → respuesta WhatsApp | ✅ |
-| 8 (Ago 10-11) | **Fase 5.5:** conjunto dorado (5.5.1, 30 casos/29 audios) + eval automatizado (5.5.2, `specs/eval_precision.py`) — monto ≥96.2% (prompt afinado) · **5.5.3 flujo de corrección 8/8 pasos + E2E real en WhatsApp el 11/08 (columna teléfono, accion registrar/corregir/aclaracion, 2 bugs corregidos y QA 39/39)** | 🔄 (falta 5.5.4 ajustes + 5.5.5 suite en CI) |
+| 8 (Ago 10-12) | **Fase 5.5:** conjunto dorado (5.5.1, **34 casos/33 audios** en v5) + eval automatizado (5.5.2, `specs/eval_precision.py`) — monto ≥96.2% (prompt afinado) · **5.5.3 flujo de corrección 8/8 pasos + E2E real en WhatsApp el 11/08** · **5.5.4 ajustes iterativos + trampas A–G + eval real 100% peor de 3 (12/08, pytest 46/46)** | 🔄 (falta 5.5.5 suite en CI) |
 
 ### Pendientes para MVP Comercial
 
 - **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción. **✅ COMPLETADO 06/08/2026** — E2E real validado con nota de voz real (falso positivo del bloqueo; ver arriba). Habilita el **PUNTO A** (testeo interno, ≤5 destinatarios en la allowlist).
 - **Flujo de corrección por WhatsApp (5.5.3):** "corrige, eran 6 rojos no 5" → el bot actualiza la última transacción y confirma, en vez de crear una nueva (ADR-0010). Incluye pedir aclaración cuando el audio trae dos flujos (caso 27). **✅ COMPLETADO y validado E2E real 11/08/2026** (8/8 pasos, pytest 39/39; la 2ª nota de voz corrigió la última fila del teléfono en WhatsApp).
-- **Ajustes iterativos de precisión (5.5.4):** cada fallo del eval → test de regresión. Brechas del eval 11/08: casos 6, 11/20, 22 y correcciones parciales 32/34. Candidato conocido: caso 9 "seis tejas" transcrito a veces "seis cejas".
+- **Ajustes iterativos de precisión (5.5.4):** ✅ **COMPLETADO 12/08/2026** — trampas de
+  regresión A–G (`tests/test_precision_regresion.py`) + 4 reglas al `SYSTEM_PROMPT_PARSE`
+  (`services/openai_service.py:54`); eval real **100% peor de 3**. El caso 9 ("seis tejas" →
+  "seis cejas") queda como limitación aceptada de Whisper (trampa E).
+- **Suite de precisión en CI (5.5.5):** integrar los tests de regresión al pipeline de CI; el
+  eval real (audios + API de OpenAI) se mantiene como paso manual por costo de API.
 - **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
 - **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
 - **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS.
@@ -307,7 +342,7 @@ docker compose exec app python -m pytest tests/ -v
 | Ruff | `ruff check .` | 0 errores |
 | Mypy | `mypy app/ workers/ services/` (config, sin `--strict`, como la CI) | 0 errores en 15 archivos |
 | Mypy estricto | `mypy --strict` | **Success: no issues found in 15 source files (05/08/2026)** |
-| Pytest | `pytest tests/ -v` | 39/39 passed |
+| Pytest | `pytest tests/ -v` | 46/46 passed |
 
 ```bash
 # QA local (Docker)
