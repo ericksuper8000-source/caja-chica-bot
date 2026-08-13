@@ -22,9 +22,12 @@ Salida:
 Casos especiales:
     - esperado = null            (casos 21, 22: sin monto): el bot debe NO crear transaccion.
     - esperado = PEDIR_ACLARACION (caso 27: dos flujos en un audio): el bot debe pedir aclaracion.
-    - esperado con "accion"      (casos de correccion 31+: el bot debe detectar 'corregir').
-      Estos casos NO cuentan en el % de monto (no hay monto esperado en algunos); se reportan
-      por separado como 'comportamiento' pero SI se listan en la tabla para revisar a mano.
+    - esperado con "accion"      (casos de correccion 31+): el bot debe detectar 'corregir'.
+      Contrato delta (ADR-0010): solo se exigen los campos en `campos_a_verificar`
+      (los que el usuario menciona). Un null en un campo no verificado se reporta
+      como "CONSERVA" (correcto: el sistema conserva el valor anterior). Estos casos
+      NO cuentan en el % de monto; se reportan por separado como 'comportamiento' pero
+      SI se listan en la tabla para revisar a mano.
 """
 
 import asyncio
@@ -66,8 +69,19 @@ def convertir_a_wav(ruta_audio: str) -> str:
     return wav_path
 
 
-def comparar(obtenido: dict | None, esperado: dict) -> dict[str, str | None]:
-    """Compara lo que extrajo el bot contra la respuesta correcta."""
+def comparar(
+    obtenido: dict | None,
+    esperado: dict,
+    campos_a_verificar: list[str] | None = None,
+) -> dict[str, str | None]:
+    """Compara lo que extrajo el bot contra la respuesta correcta.
+
+    Contrato delta (correcciones, ADR-0010): los campos que el usuario NO menciona
+    pueden venir en null porque el sistema conserva el valor anterior. Solo se
+    exigen los campos listados en `campos_a_verificar`. Un null en un campo no
+    verificado se reporta como "CONSERVAR" (correcto); un valor presente se valida
+    igual (si es erróneo, FALLO igualmente).
+    """
     resultado: dict[str, str | None] = {
         "accion": None,
         "monto": None,
@@ -76,18 +90,28 @@ def comparar(obtenido: dict | None, esperado: dict) -> dict[str, str | None]:
     }
     if not obtenido:
         return resultado
-    if "accion" in esperado:
+    if "accion" in esperado and (campos_a_verificar is None or "accion" in campos_a_verificar):
         resultado["accion"] = "OK" if obtenido.get("accion") == esperado["accion"] else "FALLO"
-    if "monto" in esperado:
+    if "monto" in esperado and (campos_a_verificar is None or "monto" in campos_a_verificar):
         resultado["monto"] = "OK" if obtenido.get("monto") == esperado["monto"] else "FALLO"
-    if "categoria" in esperado:
-        resultado["categoria"] = (
-            "OK" if obtenido.get("categoria") == esperado["categoria"] else "FALLO"
-        )
-    if "tipo_movimiento" in esperado:
-        resultado["tipo"] = (
-            "OK" if obtenido.get("tipo_movimiento") == esperado["tipo_movimiento"] else "FALLO"
-        )
+    if "categoria" in esperado and (
+        campos_a_verificar is None or "categoria" in campos_a_verificar
+    ):
+        if obtenido.get("categoria") is None:
+            resultado["categoria"] = "CONSERVAR"
+        else:
+            resultado["categoria"] = (
+                "OK" if obtenido.get("categoria") == esperado["categoria"] else "FALLO"
+            )
+    if "tipo_movimiento" in esperado and (
+        campos_a_verificar is None or "tipo_movimiento" in campos_a_verificar
+    ):
+        if obtenido.get("tipo_movimiento") is None:
+            resultado["tipo"] = "CONSERVAR"
+        else:
+            resultado["tipo"] = (
+                "OK" if obtenido.get("tipo_movimiento") == esperado["tipo_movimiento"] else "FALLO"
+            )
     return resultado
 
 
@@ -98,6 +122,7 @@ async def evaluar_caso(caso: dict) -> dict:
     if not os.path.exists(ruta_audio):
         return {"id": caso["id"], "error": f"audio no encontrado: {audio_name}"}
 
+    campos_a_verificar = caso.get("campos_a_verificar")
     wav_path = convertir_a_wav(ruta_audio)
     transcripcion = await transcribir_audio_whisper(wav_path)
     if not transcripcion:
@@ -107,7 +132,7 @@ async def evaluar_caso(caso: dict) -> dict:
             "obtenido": None,
             "esperado": caso.get("esperado"),
             "objetivo": caso.get("objetivo", ""),
-            "resultado": comparar(None, caso.get("esperado") or {}),
+            "resultado": comparar(None, caso.get("esperado") or {}, campos_a_verificar),
         }
 
     obtenido = await parse_financial_text(transcripcion)
@@ -117,7 +142,7 @@ async def evaluar_caso(caso: dict) -> dict:
         "obtenido": obtenido,
         "esperado": caso.get("esperado"),
         "objetivo": caso.get("objetivo", ""),
-        "resultado": comparar(obtenido, caso.get("esperado") or {}),
+        "resultado": comparar(obtenido, caso.get("esperado") or {}, campos_a_verificar),
     }
 
 
@@ -185,6 +210,12 @@ def imprimir_resumen(resultados: list[dict]) -> None:
                 "categoria": conteo_cat,
                 "tipo": conteo_tipo,
             }[campo]
+            if res[campo] == "CONSERVAR":
+                print(
+                    f"       {campo:<10} {'CONSERVA':<6} esperado={esperado[llave]!r} "
+                    f"bot=None (conserva anterior)"
+                )
+                continue
             conteo["total"] += 1
             if res[campo] == "OK":
                 conteo["ok"] += 1
