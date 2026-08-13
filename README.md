@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 12/08/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 13/08/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -85,9 +85,10 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
   `registrar` / `corregir` / `aclaracion`. El system prompt distingue una corrección
   ("era X no Y"), un registro normal y un mensaje con dos flujos.
 - **Corrección real (ADR-0010)** — "corrige, eran 6 rojos no 5" → `update_last_transaction_to_sheet`
-  localiza la última fila del remitente y reescribe las celdas (monto/categoría/tipo/detalle)
-  conservando la fecha; el bot confirma "Corregido: ₡6000 en Alimentación". NO crea una
-  transacción nueva.
+  localiza la última fila del remitente y la fusiona con el **delta** corregido
+  (semántica delta: campo `null` = conservar el valor anterior; solo aplica lo que el usuario
+  menciona). Reescribe monto/categoría/tipo/detalle conservando la fecha; el bot confirma
+  "Corregido: ₡6000 en Alimentación". NO crea una transacción nueva.
 - **Pedido de aclaración** — si el mensaje trae dos flujos (ingreso + gasto, o dos montos),
   el bot NO registra nada y responde "Vi dos movimientos... ¿cuál querés que apunte?"
   (caso 27: ✅ verificado en eval).
@@ -114,9 +115,11 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
   Listos para subir al repo.
 
 ### Ajustes iterativos de precisión (Fase 5.5.4, 12/08/2026)
-- **Trampas de regresión A–G (`tests/test_precision_regresion.py`)** — blindan las reglas de
+- **Trampas de regresión A–G (+H) (`tests/test_precision_regresion.py`)** — blindan las reglas de
   negocio decididas con el dueño:
-  - **A** corrección = registro COMPLETO (nunca null) · **B** frase sin monto → NO se crea
+  - **A** corrección = DELTA (campo no mencionado → `null` → el sistema conserva el valor de la
+    fila anterior; enmendada el 13/08/2026 tras hallazgo real) · **H** una corrección solo de
+    monto NO inventa categoría ("Otros") · **B** frase sin monto → NO se crea
     transacción (`aclaracion`) · **C** los modismos SIEMPRE resuelven a colones (monto nunca null
     si hay dinero) · **D** gastos de movilidad (parqueo/peaje/gasolina) = Transporte vs. ingreso
     por prestar un servicio = Servicios · **E** limitación aceptada de Whisper ("seis tejas" →
@@ -129,10 +132,30 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
 - **Eval real en el contenedor (3 corridas, 12/08/2026): monto 100% · categoría 100% · tipo
   100%** (peor de 3 = 100%) sobre el conjunto dorado de 34 casos / 33 audios. Meta de 5.5.2
   (≥95%) superada con holgura. Confirmados en vida real: caso 22 `SIN_CREAR`, caso 27
-  `PIDE_ACLARACION`, casos 31–34 con registro COMPLETO.
+  `PIDE_ACLARACION`, casos 31–34 con corrección delta.
 - **QA: pytest 46/46 · ruff 0 · black sin cambios · mypy success (15 files).**
 - **Pendiente 5.5.5:** integrar los tests de regresión a la CI; el eval real (audios + API de
   OpenAI) se mantiene como paso manual por costo de API.
+
+### Corrección DELTA y harness de eval a contrato delta (Fase 5.5.4+, 13/08/2026)
+- **Hallazgo real (E2E WhatsApp):** la corrección solo de monto *"disculpa me equivoque eran
+  5000"* degradó la categoría "Alimentación" → "Otros" y borró el detalle. La regla anterior
+  ("registro completo") forzaba a GPT a rellenar todo sin ver la fila previa.
+- **Fix:** corrección = **delta**. Campo `null` de la IA = "no cambió" → el código conserva el
+  valor de la última fila del usuario; campo con valor = se aplica.
+  - `services/sheets_service.py` — helpers `_sync_read_last_row` y `_merge_delta_con_ultima_fila`;
+    `update_last_transaction_to_sheet` lee+mergea y devuelve la fila aplicada.
+  - `services/openai_service.py` — regla `corregir` del prompt: solo llenar lo que se menciona.
+  - `workers/tasks.py` — confirmación con los valores aplicados.
+- **E2E real re-validado (13/08):** `-2000 | Alimentación | Almuerzo` + "eran 5000" →
+  **`-5000 | Alimentación | Almuerzo`** (conservó categoría y detalle).
+- **Harness de eval a contrato delta (Opción A):** `golden_set.json` con `campos_a_verificar`
+  en 31–34; `eval_precision.py` reporta **CONSERVA** (null en campo no verificado = correcto,
+  no fallo).
+- **Eval real (8 corridas, 13/08):** casos 31–34 **100% en las 8**; 5 corridas 100% totales;
+  peor monto 96.7% (meta ≥95% cumplida). **Deuda conocida:** caso 9 "seis tejas" flaky (~37%),
+  pre-existente y fuera del alcance del delta — ver `docs/plan-correccion-delta.md`.
+- **QA: pytest 48/48 · ruff 0 · black · mypy --strict.** ADR-0012 registra la decisión.
 
 ---
 
@@ -193,7 +216,7 @@ Celery Worker (workers/tasks.py)
 
 ## Estado del Proyecto
 
-- **46 tests, 46 passed** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde · `mypy --strict` en verde (05/08/2026)
+- **48 tests, 48 passed** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde · `mypy --strict` en verde (05/08/2026, re-verificado 13/08/2026)
 - CI/CD: GitHub Actions + GitLab CI (pipelines idénticos)
 - **03/08/2026:** Descarga de audio de Meta corregida (Bearer Token) y validada con `200 OK` contra servidores reales.
 - **05/08/2026:** App Secret real aplicado, firma HMAC-SHA256 validada matemáticamente, suscripción WABA→App exitosa y **pipeline de IA demostrado de punta a punta sin Meta** (webhook simulado → Whisper → GPT-4o-mini → Google Sheets).
@@ -214,12 +237,20 @@ Celery Worker (workers/tasks.py)
   `AsyncClient` global → por llamada (whatsapp); ambos QA verificados (39/39, ruff, black,
   mypy). → **5.5.4 completado el 12/08 (abajo); falta solo 5.5.5 (suite en CI).**
 - **12/08/2026:** **Fase 5.5.4 — ajustes iterativos COMPLETOS.** 7 trampas de regresión A–G en
-  `tests/test_precision_regresion.py` + 4 reglas al `SYSTEM_PROMPT_PARSE` (corrección = registro
-  completo, sin monto no se crea transacción, modismos nunca null, movilidad/Transporte vs.
+  `tests/test_precision_regresion.py` + 4 reglas al `SYSTEM_PROMPT_PARSE` (corrección = delta
+  (13/08), sin monto no se crea transacción, modismos nunca null, movilidad/Transporte vs.
   Servicios, "Otros" solo último recurso, modismo con número anula aclaración). **Eval real en
   el contenedor: monto/categoría/tipo 100% (peor de 3 corridas)** con el conjunto dorado de 34
   casos / 33 audios. **Tests: pytest 46/46 · ruff 0 · black sin cambios · mypy success
   (15 files).** Pendiente: **5.5.5** (suite de precisión en CI).
+- **13/08/2026:** **Corrección DELTA (fix de integridad) + harness de eval a contrato delta.**
+  Hallazgo E2E real: una corrección solo de monto degradaba la categoría a "Otros" y borraba
+  el detalle. Fix: corrección = delta (`null` = conservar el valor de la fila anterior;
+  helpers `_sync_read_last_row`/`_merge_delta_con_ultima_fila`; trampa A enmendada + trampa H;
+  ADR-0012). **E2E real re-validado:** `-5000 | Alimentación | Almuerzo` conservando categoría
+  y detalle. **Eval real (8 corridas):** casos de corrección 31–34 100% en las 8; peor monto
+  96.7% (meta ≥95% cumplida); **deuda conocida caso 9 "seis tejas" flaky (~37%), pre-existente.**
+  **Tests: pytest 48/48 · ruff 0 · black · mypy --strict.**
 
 ### Timeline
 
@@ -233,17 +264,21 @@ Celery Worker (workers/tasks.py)
 | 6 (Ago 5) | App Secret real + firma HMAC validada + suscripción WABA→App + pipeline de IA demostrado sin Meta (Whisper→GPT→Sheets) | ✅ (parcial 3.8.2) |
 | 7 (Ago 6) | **E2E real completo con Meta (5.4):** callback URL re-registrado (falso positivo del bloqueo), nota de voz real → Sheets → respuesta WhatsApp | ✅ |
 | 8 (Ago 10-12) | **Fase 5.5:** conjunto dorado (5.5.1, **34 casos/33 audios** en v5) + eval automatizado (5.5.2, `specs/eval_precision.py`) — monto ≥96.2% (prompt afinado) · **5.5.3 flujo de corrección 8/8 pasos + E2E real en WhatsApp el 11/08** · **5.5.4 ajustes iterativos + trampas A–G + eval real 100% peor de 3 (12/08, pytest 46/46)** | 🔄 (falta 5.5.5 suite en CI) |
+| 9 (Ago 13) | **Corrección DELTA (fix de integridad)** — hallazgo E2E real, trampa A enmendada + trampa H, ADR-0012, harness de eval a contrato delta, E2E real re-validado; **pytest 48/48** · eval 8 corridas (31–34 100%, peor monto 96.7% meta cumplida) · deuda conocida: caso 9 flaky | ✅ (fix delta completo; 5.5.5 sigue pendiente de CI) |
 
 ### Pendientes para MVP Comercial
 
 - **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción. **✅ COMPLETADO 06/08/2026** — E2E real validado con nota de voz real (falso positivo del bloqueo; ver arriba). Habilita el **PUNTO A** (testeo interno, ≤5 destinatarios en la allowlist).
 - **Flujo de corrección por WhatsApp (5.5.3):** "corrige, eran 6 rojos no 5" → el bot actualiza la última transacción y confirma, en vez de crear una nueva (ADR-0010). Incluye pedir aclaración cuando el audio trae dos flujos (caso 27). **✅ COMPLETADO y validado E2E real 11/08/2026** (8/8 pasos, pytest 39/39; la 2ª nota de voz corrigió la última fila del teléfono en WhatsApp).
-- **Ajustes iterativos de precisión (5.5.4):** ✅ **COMPLETADO 12/08/2026** — trampas de
-  regresión A–G (`tests/test_precision_regresion.py`) + 4 reglas al `SYSTEM_PROMPT_PARSE`
-  (`services/openai_service.py:54`); eval real **100% peor de 3**. El caso 9 ("seis tejas" →
-  "seis cejas") queda como limitación aceptada de Whisper (trampa E).
-- **Suite de precisión en CI (5.5.5):** integrar los tests de regresión al pipeline de CI; el
-  eval real (audios + API de OpenAI) se mantiene como paso manual por costo de API.
+- **Ajustes iterativos de precisión (5.5.4):** ✅ **COMPLETADO 12/08/2026 + refinamiento delta
+  13/08/2026** — trampas de regresión A–G+H (`tests/test_precision_regresion.py`) + reglas al
+  `SYSTEM_PROMPT_PARSE` (`services/openai_service.py:54`); corrección = **delta** (ADR-0012);
+  eval real **100% en 5 de 8 corridas, peor monto 96.7% (meta ≥95% cumplida)**. El caso 9
+  ("seis tejas" → "seis cejas") queda como **deuda conocida** (~37% flaky en 8 corridas,
+  pre-existente, candidato a ajuste iterativo).
+- **Suite de precisión en CI (5.5.5):** ✅ **VERIFICADO 12/08/2026** — las trampas A–G corren
+  vía `pytest tests/` en GitHub Actions y GitLab CI; el eval real (audios + API de OpenAI) se
+  mantiene como paso manual por costo de API.
 - **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
 - **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
 - **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS.
@@ -342,7 +377,7 @@ docker compose exec app python -m pytest tests/ -v
 | Ruff | `ruff check .` | 0 errores |
 | Mypy | `mypy app/ workers/ services/` (config, sin `--strict`, como la CI) | 0 errores en 15 archivos |
 | Mypy estricto | `mypy --strict` | **Success: no issues found in 15 source files (05/08/2026)** |
-| Pytest | `pytest tests/ -v` | 46/46 passed |
+| Pytest | `pytest tests/ -v` | 48/48 passed |
 
 ```bash
 # QA local (Docker)
