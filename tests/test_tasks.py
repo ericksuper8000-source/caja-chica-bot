@@ -207,7 +207,10 @@ def test_download_audio_task_corregir_actualiza() -> None:
         patch("workers.tasks.parse_financial_text", return_value=data_corregir),
         patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
         patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
-        patch("workers.tasks.update_last_transaction_to_sheet", return_value=True) as mock_update,
+        patch(
+            "workers.tasks.update_last_transaction_to_sheet",
+            return_value=[-6000, "Transporte", "Pasajes"],
+        ) as mock_update,
         patch("workers.tasks.httpx.Client"),
         patch("workers.tasks.os.makedirs"),
         patch("workers.tasks.open", create=True),

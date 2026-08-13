@@ -82,6 +82,14 @@ async def test_update_last_transaction_success(mock_get_sheets_client):
         "50611111111",
         "50688888888",
     ]
+    # Fila previa leída para el merge del delta: [fecha, monto, categoria, detalle, telefono]
+    mock_worksheet.row_values.return_value = [
+        "2026-08-13 21:00:00",
+        "-2000",
+        "Alimentación",
+        "Almuerzo",
+        "50688888888",
+    ]
 
     fake_transaction = {
         "monto": 6000,
@@ -92,7 +100,7 @@ async def test_update_last_transaction_success(mock_get_sheets_client):
 
     result = await update_last_transaction_to_sheet(fake_transaction, "50688888888")
 
-    assert result is True
+    assert result == [-6000, "Transporte", "Pasajes"]
     # Debe actualizar la última coincidencia (fila 5), columnas B:E, sin tocar la fecha
     called_args = mock_worksheet.update.call_args[0]
     assert called_args[0] == "B5:E5"
@@ -101,8 +109,53 @@ async def test_update_last_transaction_success(mock_get_sheets_client):
 
 @pytest.mark.anyio
 @patch("services.sheets_service.get_sheets_client")
+async def test_update_last_transaction_correccion_parcial_preserva(mock_get_sheets_client):
+    """
+    Trampa H (hallazgo 13/08/2026): corrección de SOLO monto conserva la categoría y
+    el detalle de la fila anterior. El LLM devuelve monto y el resto en None.
+    """
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.get_worksheet.return_value = mock_worksheet
+
+    mock_worksheet.col_values.return_value = [
+        "teléfono",
+        "50611111111",
+        "50688888888",
+    ]
+    # Fila previa: un gasto de almuerzo registrado antes
+    mock_worksheet.row_values.return_value = [
+        "2026-08-13 21:32:54",
+        "-2000",
+        "Alimentación",
+        "almuerzo",
+        "50688888888",
+    ]
+
+    # Delta: solo corrige el monto; el resto viene null (no mencionado)
+    fake_transaction = {
+        "monto": 5000,
+        "categoria": None,
+        "tipo_movimiento": None,
+        "detalle": None,
+    }
+
+    result = await update_last_transaction_to_sheet(fake_transaction, "50688888888")
+
+    # El monto se corrige a -5000 (sigue siendo Gasto) y NO se pierden categoría/detalle
+    assert result == [-5000, "Alimentación", "almuerzo"]
+    called_args = mock_worksheet.update.call_args[0]
+    assert called_args[1] == [[-5000, "Alimentación", "almuerzo", "50688888888"]]
+
+
+@pytest.mark.anyio
+@patch("services.sheets_service.get_sheets_client")
 async def test_update_last_transaction_sin_previas(mock_get_sheets_client):
-    """Prueba que si el usuario no tiene transacciones previas, devuelve False sin actualizar."""
+    """Prueba que si el usuario no tiene transacciones previas, devuelve None sin actualizar."""
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
     mock_worksheet = MagicMock()
@@ -123,7 +176,7 @@ async def test_update_last_transaction_sin_previas(mock_get_sheets_client):
 
     result = await update_last_transaction_to_sheet(fake_transaction, "50688888888")
 
-    assert result is False
+    assert result is None
     mock_worksheet.update.assert_not_called()
 
 
