@@ -4,15 +4,19 @@ Trampas de regresión (5.5.4) — blindan las reglas de negocio decididas el 11-
 Cada función es una "trampa": si la regla se debilita, la trampa se enciende en rojo.
 
 Reglas cubiertas (ver session-log 12/08/2026 y stage-055.md):
-- A  Corrección = registro COMPLETO (nunca null) -> casos dorados 32 y 34.
+- A  Corrección = DELTA (null = "no cambió"); solo llena lo mencionado -> hallazgo 13/08/2026.
 - B  Frase sin monto -> NO se crea transacción (accion='aclaracion') -> caso 22.
 - C  Los modismos SIEMPRE resuelven a colones; monto nunca null si hay dinero -> caso 6.
 - D  Gastos de movilidad = Transporte; ingreso por prestar un servicio = Servicios
      -> casos 11 y 20.
 - E  Limitación aceptada de Whisper (transcripción de modismos). Cuando la
      transcripción ES correcta, la lógica debe acertar ("seis tejas" = 600) -> caso 9.
+- F  Un modismo con número anula el aclaracion por falta de monto -> caso 6 (12/08).
+- G  'Otros' solo como último recurso (no refugio) -> eval 12/08.
+- H  Corrección parcial (solo monto) preserva categoría y detalle de la fila anterior
+     -> hallazgo 13/08/2026.
 
-Las reglas A-D se protegen con tests de CONTRATO de prompt: verifican que el system
+Las reglas A-D y F-H se protegen con tests de CONTRATO de prompt: verifican que el system
 prompt (SYSTEM_PROMPT_PARSE) contenga la regla. Si la promesa cambia, el prompt debe
 cambiarse CON su trampa al mismo tiempo. La regla E es un test de documentación del
 comportamiento esperado con transcripción correcta.
@@ -28,15 +32,19 @@ _PROMPT = SYSTEM_PROMPT_PARSE.lower()
 
 
 # ------------------------------------------------------------------
-# REGLA A — La corrección produce SIEMPRE un registro completo
+# REGLA A — La corrección es un DELTA: null = "no cambió" (13/08/2026)
 # ------------------------------------------------------------------
-def test_regla_a_correccion_debe_ser_registro_completo():
+def test_regla_a_correccion_es_delta_no_reemplazo_total():
     """
-    Trampa A (casos dorados 32 y 34): en accion='corregir' el prompt debe exigir
-    los 4 campos (monto, categoria, tipo_movimiento, detalle) y prohibir field null.
+    Trampa A (hallazgo 13/08/2026): una corrección NO es un reemplazo total. En
+    accion='corregir' el prompt debe expresar que solo se llenan los campos que el
+    usuario menciona; los no mencionados van en null y el sistema conserva el valor
+    anterior (corrección parcial no destruye categoría/detalle).
     """
-    assert "registro completo" in _PROMPT
-    assert "nunca dejes campos en null" in _PROMPT
+    assert "el resultado es un delta" in _PROMPT
+    assert "va en null" in _PROMPT
+    assert "conserva el valor anterior" in _PROMPT
+    assert "no mencione" in _PROMPT
 
 
 # ------------------------------------------------------------------
@@ -104,6 +112,22 @@ def test_regla_g_otros_solo_ultimo_recurso():
     """
     assert "último recurso" in _PROMPT
     assert "se prefieren por encima de 'otros'" in _PROMPT
+
+
+# ------------------------------------------------------------------
+# REGLA H — Corrección parcial NO inventa campos (13/08/2026)
+# ------------------------------------------------------------------
+def test_regla_h_correccion_parcial_no_inventa_categoria():
+    """
+    Trampa H (hallazgo 13/08/2026): en una corrección que solo menciona el monto
+    ("disculpa me equivoque eran 5000"), el prompt NO debe obligar a inventar la
+    categoría (caía a 'Otros' y borraba el detalle). Debe permitir campos en null
+    y prohibir adivinar una categoría que el usuario no menciona.
+    """
+    assert "nunca inventes un valor" in _PROMPT
+    assert "prohibido adivinar" in _PROMPT
+    assert "solo infiere del contexto" in _PROMPT
+    assert "si el usuario restablece" in _PROMPT
 
 
 # ------------------------------------------------------------------
