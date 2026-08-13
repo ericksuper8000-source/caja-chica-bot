@@ -85,9 +85,10 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
   `registrar` / `corregir` / `aclaracion`. El system prompt distingue una corrección
   ("era X no Y"), un registro normal y un mensaje con dos flujos.
 - **Corrección real (ADR-0010)** — "corrige, eran 6 rojos no 5" → `update_last_transaction_to_sheet`
-  localiza la última fila del remitente y reescribe las celdas (monto/categoría/tipo/detalle)
-  conservando la fecha; el bot confirma "Corregido: ₡6000 en Alimentación". NO crea una
-  transacción nueva.
+  localiza la última fila del remitente y la fusiona con el **delta** corregido
+  (semántica delta: campo `null` = conservar el valor anterior; solo aplica lo que el usuario
+  menciona). Reescribe monto/categoría/tipo/detalle conservando la fecha; el bot confirma
+  "Corregido: ₡6000 en Alimentación". NO crea una transacción nueva.
 - **Pedido de aclaración** — si el mensaje trae dos flujos (ingreso + gasto, o dos montos),
   el bot NO registra nada y responde "Vi dos movimientos... ¿cuál querés que apunte?"
   (caso 27: ✅ verificado en eval).
@@ -214,8 +215,8 @@ Celery Worker (workers/tasks.py)
   `AsyncClient` global → por llamada (whatsapp); ambos QA verificados (39/39, ruff, black,
   mypy). → **5.5.4 completado el 12/08 (abajo); falta solo 5.5.5 (suite en CI).**
 - **12/08/2026:** **Fase 5.5.4 — ajustes iterativos COMPLETOS.** 7 trampas de regresión A–G en
-  `tests/test_precision_regresion.py` + 4 reglas al `SYSTEM_PROMPT_PARSE` (corrección = registro
-  completo, sin monto no se crea transacción, modismos nunca null, movilidad/Transporte vs.
+  `tests/test_precision_regresion.py` + 4 reglas al `SYSTEM_PROMPT_PARSE` (corrección = delta
+  (13/08), sin monto no se crea transacción, modismos nunca null, movilidad/Transporte vs.
   Servicios, "Otros" solo último recurso, modismo con número anula aclaración). **Eval real en
   el contenedor: monto/categoría/tipo 100% (peor de 3 corridas)** con el conjunto dorado de 34
   casos / 33 audios. **Tests: pytest 46/46 · ruff 0 · black sin cambios · mypy success
