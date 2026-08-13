@@ -64,6 +64,55 @@ def _sync_update_last_row(spreadsheet_id: str, sender_phone: str, row_values: li
     )
 
 
+def _sync_read_last_row(spreadsheet_id: str, sender_phone: str) -> list[Any]:
+    """
+    Operación síncrona: lee la última fila cuyo teléfono coincida con el remitente
+    (columnas A:E) para poder fusionar el delta de una corrección con los valores
+    anteriores. Lanza LookupError si el usuario no tiene transacciones previas.
+    """
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    worksheet = spreadsheet.get_worksheet(0)
+
+    phone_values = worksheet.col_values(5)
+    matches = [i for i, phone in enumerate(phone_values, start=1) if phone == sender_phone]
+    if not matches:
+        raise LookupError(f"sin transacciones previas para {sender_phone}")
+
+    last_row = matches[-1]
+    return list(worksheet.row_values(last_row))
+
+
+def _merge_delta_con_ultima_fila(delta: dict[str, Any], fila_anterior: list[Any]) -> list[Any]:
+    """
+    Fusiona el delta de una corrección con los valores de la última fila del usuario.
+
+    Semántica de delta (plan-correccion-delta.md, hallazgo 13/08/2026): un campo que el
+    LLM devuelve como None significa "el usuario no lo mencionó" → se conserva el valor
+    anterior. Un campo con valor se aplica. La fila previa viene como
+    [fecha, monto, categoria, detalle, telefono] y se devuelve el row a escribir en B:E.
+    """
+    prev_monto = int(fila_anterior[1]) if len(fila_anterior) > 1 and fila_anterior[1] else 0
+    prev_categoria = fila_anterior[2] if len(fila_anterior) > 2 else "Otros"
+    prev_detalle = fila_anterior[3] if len(fila_anterior) > 3 else ""
+
+    tipo = delta.get("tipo_movimiento")
+    if tipo is None:
+        tipo = "Gasto" if prev_monto < 0 else "Ingreso"
+
+    monto = delta.get("monto")
+    if monto is None:
+        monto = abs(prev_monto)
+
+    if tipo.lower() == "gasto" and monto > 0:
+        monto = -monto
+
+    categoria = delta.get("categoria") or prev_categoria
+    detalle = delta.get("detalle") or prev_detalle
+
+    return [monto, categoria, detalle]
+
+
 async def append_transaction_to_sheet(transaction_data: dict[str, Any], sender_phone: str) -> bool:
     """
     Inserta una nueva fila en Google Sheets de manera asíncrona.
@@ -105,39 +154,32 @@ async def append_transaction_to_sheet(transaction_data: dict[str, Any], sender_p
 
 async def update_last_transaction_to_sheet(
     transaction_data: dict[str, Any], sender_phone: str
-) -> bool:
+) -> list[Any] | None:
     """
     Actualiza la última transacción del remitente con los datos corregidos
-    (flujo de corrección 5.5.3, ADR-0010). Devuelve True si se actualizó;
-    False si el usuario no tiene transacciones previas o hubo un error de API.
+    (flujo de corrección 5.5.3, ADR-0010) usando semántica de DELTA: los campos
+    que el LLM devuelve como None se conservan de la fila anterior (corrección
+    parcial no destruye datos). Devuelve la fila final aplicada [monto, categoria,
+    detalle]; None si el usuario no tiene transacciones previas o hubo error de API.
     """
     spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
 
     try:
-        monto = transaction_data.get("monto", 0)
-        tipo = transaction_data.get("tipo_movimiento") or "Gasto"
+        fila_anterior = await asyncio.to_thread(_sync_read_last_row, spreadsheet_id, sender_phone)
+        row_values = _merge_delta_con_ultima_fila(transaction_data, fila_anterior)
+        row_to_write = [*row_values, sender_phone]
 
-        if tipo.lower() == "gasto" and monto > 0:
-            monto = -monto
+        await asyncio.to_thread(_sync_update_last_row, spreadsheet_id, sender_phone, row_to_write)
 
-        row_values = [
-            monto,
-            transaction_data.get("categoria", "Otros"),
-            transaction_data.get("detalle", ""),
-            sender_phone,
-        ]
-
-        await asyncio.to_thread(_sync_update_last_row, spreadsheet_id, sender_phone, row_values)
-
-        logger.info(f"Transacción corregida en Sheets para {sender_phone}: {row_values}")
-        return True
+        logger.info(f"Transacción corregida en Sheets para {sender_phone}: {row_to_write}")
+        return row_values
 
     except LookupError as error:
         logger.info(f"No hay transacción previa del usuario {sender_phone}: {error}")
-        return False
+        return None
     except gspread.exceptions.APIError as error:
         logger.error(f"Error de API de gspread al corregir en Google Sheets: {error}")
-        return False
+        return None
     except Exception as e:
         logger.error(f"Error inesperado en el servicio de Sheets (corregir): {e}")
-        return False
+        return None

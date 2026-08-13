@@ -58,11 +58,10 @@ async def _procesar_pipeline(file_path: str, sender_phone: str) -> str:
     if accion == "corregir":
         corregido = await update_last_transaction_to_sheet(transaction_data, sender_phone)
         if corregido:
+            monto_aplicado, categoria_aplicada = corregido[0], corregido[1]
             await enviar_mensaje_whatsapp(
                 to_phone=sender_phone,
-                mensaje=(
-                    f"Corregido: {transaction_data['categoria']} - " f"₡{transaction_data['monto']}"
-                ),
+                mensaje=(f"Corregido: {categoria_aplicada} - " f"₡{abs(monto_aplicado)}"),
             )
         else:
             await enviar_mensaje_whatsapp(
