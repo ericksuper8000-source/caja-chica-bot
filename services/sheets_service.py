@@ -18,6 +18,10 @@ _sheets_client: Any = None
 CONSENT_TAB_NAME = "Consentimiento"
 CONSENT_HEADERS = ["telefono", "estado", "fecha", "version_politica"]
 
+# Fase 6.5.2 — Aislamiento por pestañas (ADR-0009). Cada cliente escribe SOLO en su
+# pestaña (título = teléfono), creada perezosamente con estos encabezados.
+TRANSACTION_HEADERS = ["fecha", "monto", "categoria", "detalle", "telefono"]
+
 
 def get_sheets_client() -> Any:
     """
@@ -35,13 +39,31 @@ def get_sheets_client() -> Any:
         raise e
 
 
-def _sync_append_row(spreadsheet_id: str, row_values: list[Any]) -> None:
+def _sync_get_client_worksheet(spreadsheet_id: str, sender_phone: str) -> Any:
     """
-    Operación puramente síncrona que interactúa con la API de Google Sheets.
+    Resuelve la pestaña del cliente por teléfono (título = sender_phone) y la crea con
+    encabezados si no existe (ADR-0009, aislamiento por pestañas). Cada cliente escribe
+    SOLO en su pestaña dentro del mismo spreadsheet.
     """
     client = get_sheets_client()
     spreadsheet = client.open_by_key(spreadsheet_id)
-    worksheet = spreadsheet.get_worksheet(0)
+    try:
+        worksheet = spreadsheet.worksheet(sender_phone)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=sender_phone, rows=100, cols=10)
+        worksheet.append_row(
+            TRANSACTION_HEADERS,
+            value_input_option=ValueInputOption.user_entered,
+        )
+    return worksheet
+
+
+def _sync_append_row(spreadsheet_id: str, row_values: list[Any], sender_phone: str) -> None:
+    """
+    Operación puramente síncrona que interactúa con la API de Google Sheets.
+    Escribe en la pestaña del cliente (aislamiento por pestañas, ADR-0009).
+    """
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
 
     # Se utiliza ValueInputOption.user_entered para cumplir con el tipado de mypy
     worksheet.append_row(row_values, value_input_option=ValueInputOption.user_entered)
@@ -50,12 +72,11 @@ def _sync_append_row(spreadsheet_id: str, row_values: list[Any]) -> None:
 def _sync_update_last_row(spreadsheet_id: str, sender_phone: str, row_values: list[Any]) -> None:
     """
     Operación síncrona: localiza la última fila cuyo teléfono coincida con el remitente
-    y reescribe sus celdas (monto, categoría, detalle y teléfono) conservando la fecha.
-    Lanza LookupError si el usuario no tiene transacciones previas.
+    en la pestaña del cliente (ADR-0009) y reescribe sus celdas (monto, categoría,
+    detalle y teléfono) conservando la fecha. Lanza LookupError si el usuario no tiene
+    transacciones previas.
     """
-    client = get_sheets_client()
-    spreadsheet = client.open_by_key(spreadsheet_id)
-    worksheet = spreadsheet.get_worksheet(0)
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
 
     phone_values = worksheet.col_values(5)
     matches = [i for i, phone in enumerate(phone_values, start=1) if phone == sender_phone]
@@ -73,12 +94,11 @@ def _sync_update_last_row(spreadsheet_id: str, sender_phone: str, row_values: li
 def _sync_read_last_row(spreadsheet_id: str, sender_phone: str) -> list[Any]:
     """
     Operación síncrona: lee la última fila cuyo teléfono coincida con el remitente
-    (columnas A:E) para poder fusionar el delta de una corrección con los valores
-    anteriores. Lanza LookupError si el usuario no tiene transacciones previas.
+    (columnas A:E) en la pestaña del cliente (ADR-0009) para poder fusionar el delta
+    de una corrección con los valores anteriores. Lanza LookupError si el usuario no
+    tiene transacciones previas.
     """
-    client = get_sheets_client()
-    spreadsheet = client.open_by_key(spreadsheet_id)
-    worksheet = spreadsheet.get_worksheet(0)
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
 
     phone_values = worksheet.col_values(5)
     matches = [i for i, phone in enumerate(phone_values, start=1) if phone == sender_phone]
@@ -123,7 +143,8 @@ def _merge_delta_con_ultima_fila(delta: dict[str, Any], fila_anterior: list[Any]
 
 async def append_transaction_to_sheet(transaction_data: dict[str, Any], sender_phone: str) -> bool:
     """
-    Inserta una nueva fila en Google Sheets de manera asíncrona.
+    Inserta una nueva fila en Google Sheets de manera asíncrona, en la pestaña del
+    cliente (ADR-0009, aislamiento por pestañas; título = teléfono).
 
     La fila guarda también el teléfono del remitente (columna "teléfono"),
     base para localizar la última transacción del usuario en el flujo de
@@ -147,7 +168,7 @@ async def append_transaction_to_sheet(transaction_data: dict[str, Any], sender_p
             sender_phone,
         ]
 
-        await asyncio.to_thread(_sync_append_row, spreadsheet_id, row_values)
+        await asyncio.to_thread(_sync_append_row, spreadsheet_id, row_values, sender_phone)
 
         logger.info(f"Fila insertada con éxito en Sheets de forma asíncrona: {row_values}")
         return True
@@ -167,7 +188,8 @@ async def update_last_transaction_to_sheet(
     Actualiza la última transacción del remitente con los datos corregidos
     (flujo de corrección 5.5.3, ADR-0010) usando semántica de DELTA: los campos
     que el LLM devuelve como None se conservan de la fila anterior (corrección
-    parcial no destruye datos). Devuelve la fila final aplicada [monto, categoria,
+    parcial no destruye datos). Operación en la pestaña del cliente (ADR-0009,
+    aislamiento por pestañas). Devuelve la fila final aplicada [monto, categoria,
     detalle]; None si el usuario no tiene transacciones previas o hubo error de API.
     """
     spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID

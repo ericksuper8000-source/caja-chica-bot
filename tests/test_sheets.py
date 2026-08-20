@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import gspread
 import pytest
+from gspread.utils import ValueInputOption
 
 from services.sheets_service import (
     append_transaction_to_sheet,
@@ -35,7 +36,7 @@ async def test_append_transaction_gasto_success(mock_get_sheets_client):
 
     mock_get_sheets_client.return_value = mock_client
     mock_client.open_by_key.return_value = mock_spreadsheet
-    mock_spreadsheet.get_worksheet.return_value = mock_worksheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
 
     # Datos de prueba provenientes del parser de IA
     fake_transaction = {
@@ -64,6 +65,138 @@ async def test_append_transaction_gasto_success(mock_get_sheets_client):
 
 @pytest.mark.anyio
 @patch("services.sheets_service.get_sheets_client")
+async def test_append_transaction_crea_pestana_cliente_si_no_existe(mock_get_sheets_client):
+    """
+    ADR-0009 (6.5.2): si la pestaña del cliente (título = teléfono) no existe, se crea
+    con los encabezados de transacción antes de insertar la fila.
+    """
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    # La pestaña no existe -> se lanza WorksheetNotFound y se crea
+    mock_spreadsheet.worksheet.side_effect = gspread.exceptions.WorksheetNotFound
+    mock_spreadsheet.add_worksheet.return_value = mock_worksheet
+
+    fake_transaction = {
+        "monto": 3000,
+        "categoria": "Alimentación",
+        "tipo_movimiento": "Gasto",
+        "detalle": "Panadería",
+    }
+
+    result = await append_transaction_to_sheet(fake_transaction, "50660646370")
+
+    assert result is True
+    # La pestaña se crea con el teléfono como título y los encabezados de transacción
+    mock_spreadsheet.add_worksheet.assert_called_once_with(title="50660646370", rows=100, cols=10)
+    mock_worksheet.append_row.assert_any_call(
+        ["fecha", "monto", "categoria", "detalle", "telefono"],
+        value_input_option=ValueInputOption.user_entered,
+    )
+    # Y la fila se inserta en esa misma pestaña
+    inserted = mock_worksheet.append_row.call_args_list[-1].args[0]
+    assert inserted[1] == -3000
+    assert inserted[4] == "50660646370"
+
+
+@pytest.mark.anyio
+@patch("services.sheets_service.get_sheets_client")
+async def test_append_transaction_escribe_en_pestana_del_cliente(mock_get_sheets_client):
+    """
+    ADR-0009 (6.5.2): la fila se inserta en la pestaña del remitente (título = teléfono),
+    no en una hoja global.
+    """
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+
+    fake_transaction = {
+        "monto": 500,
+        "categoria": "Compras",
+        "tipo_movimiento": "Gasto",
+        "detalle": "Dos tejas de pan",
+    }
+
+    await append_transaction_to_sheet(fake_transaction, "50660646370")
+
+    # Resolución de pestaña por teléfono
+    mock_spreadsheet.worksheet.assert_called_once_with("50660646370")
+    mock_worksheet.append_row.assert_called_once()
+
+
+@pytest.mark.anyio
+@patch("services.sheets_service.get_sheets_client")
+async def test_update_last_transaction_usa_pestana_del_cliente(mock_get_sheets_client):
+    """
+    ADR-0009 (6.5.2): la corrección lee y actualiza SOLO la pestaña del remitente.
+    """
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+
+    mock_worksheet.col_values.return_value = ["teléfono", "50660646370"]
+    mock_worksheet.row_values.return_value = [
+        "2026-08-20 19:00:00",
+        "-2000",
+        "Alimentación",
+        "almuerzo",
+        "50660646370",
+    ]
+
+    fake_transaction = {
+        "monto": 2500,
+        "categoria": None,
+        "tipo_movimiento": None,
+        "detalle": None,
+    }
+
+    result = await update_last_transaction_to_sheet(fake_transaction, "50660646370")
+
+    assert result == [-2500, "Alimentación", "almuerzo"]
+    # Se resuelve la pestaña del cliente en la lectura y en la actualización
+    assert mock_spreadsheet.worksheet.call_count == 2
+    mock_spreadsheet.worksheet.assert_called_with("50660646370")
+
+
+@pytest.mark.anyio
+@patch("services.sheets_service.get_sheets_client")
+async def test_append_transaction_cada_cliente_tiene_su_pestana(mock_get_sheets_client):
+    """
+    ADR-0009 (6.5.2): dos clientes distintos resuelven pestañas distintas (aislamiento).
+    """
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet_a = MagicMock()
+    mock_worksheet_b = MagicMock()
+
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.side_effect = [mock_worksheet_a, mock_worksheet_b]
+
+    base = {"categoria": "Ventas", "tipo_movimiento": "Ingreso", "detalle": "venta"}
+
+    await append_transaction_to_sheet({**base, "monto": 1000}, "50611111111")
+    await append_transaction_to_sheet({**base, "monto": 2000}, "50622222222")
+
+    assert mock_spreadsheet.worksheet.call_args_list[0].args[0] == "50611111111"
+    assert mock_spreadsheet.worksheet.call_args_list[1].args[0] == "50622222222"
+    mock_worksheet_a.append_row.assert_called_once()
+    mock_worksheet_b.append_row.assert_called_once()
+
+
+@pytest.mark.anyio
+@patch("services.sheets_service.get_sheets_client")
 async def test_update_last_transaction_success(mock_get_sheets_client):
     """Prueba que la corrección localice la última fila del teléfono y actualice B:E."""
     mock_client = MagicMock()
@@ -72,7 +205,7 @@ async def test_update_last_transaction_success(mock_get_sheets_client):
 
     mock_get_sheets_client.return_value = mock_client
     mock_client.open_by_key.return_value = mock_spreadsheet
-    mock_spreadsheet.get_worksheet.return_value = mock_worksheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
 
     # Columna de teléfono: encabezado + filas de otros usuarios + la del usuario (filas 3 y 5)
     mock_worksheet.col_values.return_value = [
@@ -120,7 +253,7 @@ async def test_update_last_transaction_correccion_parcial_preserva(mock_get_shee
 
     mock_get_sheets_client.return_value = mock_client
     mock_client.open_by_key.return_value = mock_spreadsheet
-    mock_spreadsheet.get_worksheet.return_value = mock_worksheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
 
     mock_worksheet.col_values.return_value = [
         "teléfono",
@@ -165,7 +298,7 @@ async def test_update_last_transaction_correccion_monto_cero_conserva(mock_get_s
 
     mock_get_sheets_client.return_value = mock_client
     mock_client.open_by_key.return_value = mock_spreadsheet
-    mock_spreadsheet.get_worksheet.return_value = mock_worksheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
 
     mock_worksheet.col_values.return_value = ["teléfono", "50611111111", "50688888888"]
     # Fila previa: un gasto de transporte de 6000
@@ -200,7 +333,7 @@ async def test_update_last_transaction_sin_previas(mock_get_sheets_client):
 
     mock_get_sheets_client.return_value = mock_client
     mock_client.open_by_key.return_value = mock_spreadsheet
-    mock_spreadsheet.get_worksheet.return_value = mock_worksheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
 
     # Solo encabezado y filas de otros usuarios
     mock_worksheet.col_values.return_value = ["teléfono", "50611111111", "50622222222"]
