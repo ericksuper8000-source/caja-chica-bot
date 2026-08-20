@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 13/08/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 20/08/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -157,6 +157,40 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
   pre-existente y fuera del alcance del delta — ver `docs/plan-correccion-delta.md`.
 - **QA: pytest 48/48 · ruff 0 · black · mypy --strict.** ADR-0012 registra la decisión.
 
+### Privacidad, consentimiento y aislamiento (Fase 6.5, 20/08/2026)
+
+- **Canal de texto habilitado** — el webhook solo procesaba audio; ahora también procesa
+  mensajes de texto (`Message.text`, `extraer_datos_texto()`, tarea `procesar_mensaje_texto_task`).
+  Requisito del consentimiento, porque el "ACEPTO" del usuario llega por texto.
+- **Consentimiento explícito Ley 8968 (6.5.1)** — `services/politica_service.py`: política
+  mínima (qué se guarda, transferencia internacional art. 14, derechos ARCO, cómo aceptar),
+  `POLITICA_VERSION = "1.0"`, `detectar_respuesta_consentimiento()` (negación antes que
+  aceptación). Persistencia en la pestaña `Consentimiento` del sheet
+  (`telefono | estado | fecha | version_politica`).
+- **Gate en el pipeline** — sin aceptación de la **versión vigente** no se parsea ni guarda
+  nada: "ACEPTO" registra y confirma, "NO ACEPTO" registra y avisa, cualquier otro texto envía
+  la política. La política está documentada en la memoria (`docs/politica-privacidad.md`, 6.5.4).
+- **Fix de monto 0** — un mensaje sin precio ya no se guarda con monto 0: regla en el prompt
+  ("el 0 no es un monto válido") + trampa REGLA I + chequeo defensivo `if not monto` en
+  `tasks.py` + merge delta (monto 0 conserva el anterior).
+- **Aislamiento por pestañas (6.5.2, ADR-0009)** — cada cliente registra SOLO en su pestaña
+  (título = teléfono, creada perezosamente con encabezados). `_sync_get_client_worksheet()` se
+  aplica en append/corregir/leer. Sheet1 queda como legado del dueño.
+- **Exportación y baja (6.5.3, ADR-0011)** — derechos ARCO: "exporta mis datos" envía el
+  historial de la pestaña del cliente por WhatsApp (`obtener_transacciones_cliente()` +
+  `_formatear_movimiento()`); "darme de baja" marca `cancelado` en `Consentimiento` SIN borrar
+  datos (la eliminación total la decide el fundador).
+- **Re-consentimiento por versión (6.5.6, ADR-0011)** — `politica_aceptada_vigente()`: el gate
+  exige `estado == aceptado` **y** versión vigente (normaliza `'1.0'` vs `'1'` porque Sheets
+  guarda el entero). Si la política cambia, el usuario recibe aviso + política nueva y debe
+  responder "ACEPTO" otra vez.
+- **Backups del sheet (6.5.5, ADR-0014)** — `services/backup_service.py`: copia local diaria
+  del spreadsheet completo (una CSV UTF-8 por pestaña + `MANIFEST.txt`, empaquetados en
+  `caja-chica-backup-AAAAMMDD-HHMMSS.zip`). Retención 90 días purgando por la fecha del
+  nombre. Programada por Celery beat (23:00 UTC configurable) vía `crear_backup_task`; los
+  .zip caen en `/backups` (volumen `backups_data`, sobrevive a recreaciones). Destino
+  intercambiable: hoy local, a un bucket cuando el proyecto crezca.
+
 ---
 
 ## Arquitectura y Decisiones Técnicas
@@ -187,16 +221,18 @@ Celery Worker (workers/tasks.py)
 | Tareas async | Celery + Redis (broker & backend) | Timeouts de Meta (< 2 s) exigen delegación |
 | Base de datos | PostgreSQL 15+ | Auditoría y multi-tenancy futuro (no usado en MVP) |
 | IA | OpenAI Whisper + GPT-4o-mini | Único provider en MVP; `transcribir_audio_whisper()` es fácil de reemplazar |
-| Persistencia MVP | Google Sheets vía `gspread` | 1 hoja global para 20-50 clientes |
+| Persistencia MVP | Google Sheets vía `gspread` | 1 sheet con pestañas por cliente (ADR-0009, 6.5.2) |
 | Proxy | Caddy | SSL automático, cero configuración |
 | CI/CD | GitHub Actions + GitLab CI | Pipelines idénticos y espejados desde un solo `push` |
 
 ### Decisiones Clave
 
 **Persistencia Google Sheets → PostgreSQL (migración gradual):**
-- MVP: 1 hoja global, todos los clientes comparten la misma hoja.
-- Post-MVP (venta inicial): 1 hoja con pestañas por cliente. Sin PostgreSQL.
-- Crecimiento (50+ clientes): Migrar a PostgreSQL con `tenant_id`. Razón: Sheets se vuelve lenta con >50 clientes concurrentes.
+- MVP (actual): 1 sheet con **pestañas por cliente** (título = teléfono) desde la Fase 6.5.2,
+  + pestañas administrativas `Consentimiento` (6.5.1) y futura `Suscripciones` (Fase 7).
+- Post-MVP (venta inicial): 1 sheet con pestañas por cliente. Sin PostgreSQL.
+- Crecimiento (10M celdas / 200 req/s): Migrar a PostgreSQL con `tenant_id`. Razón: Sheets
+  se vuelve lenta con muchos clientes concurrentes (ADR-0002).
 - SaaS masivo: Onboarding automatizado + Stripe + Terraform.
 
 **Provider de IA — Solo OpenAI:**
@@ -216,7 +252,7 @@ Celery Worker (workers/tasks.py)
 
 ## Estado del Proyecto
 
-- **48 tests, 48 passed** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde · `mypy --strict` en verde (05/08/2026, re-verificado 13/08/2026)
+- **95 tests, 95 passed** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde · `mypy --strict` en verde (05/08/2026, re-verificado 13/08/2026)
 - CI/CD: GitHub Actions + GitLab CI (pipelines idénticos)
 - **03/08/2026:** Descarga de audio de Meta corregida (Bearer Token) y validada con `200 OK` contra servidores reales.
 - **05/08/2026:** App Secret real aplicado, firma HMAC-SHA256 validada matemáticamente, suscripción WABA→App exitosa y **pipeline de IA demostrado de punta a punta sin Meta** (webhook simulado → Whisper → GPT-4o-mini → Google Sheets).
@@ -251,6 +287,18 @@ Celery Worker (workers/tasks.py)
   y detalle. **Eval real (8 corridas):** casos de corrección 31–34 100% en las 8; peor monto
   96.7% (meta ≥95% cumplida); **deuda conocida caso 9 "seis tejas" flaky (~37%), pre-existente.**
   **Tests: pytest 48/48 · ruff 0 · black · mypy --strict.**
+- **20/08/2026:** **Fase 6.5 — privacidad, consentimiento y aislamiento.** Canal de texto
+  habilitado (antes solo audio). **6.5.1** consentimiento Ley 8968: política mínima + gate
+  (sin aceptar no se procesa nada), persistencia en pestaña `Consentimiento`; **fix de monto
+  0** (mensaje sin precio ya no se guarda con 0). **6.5.2** aislamiento por pestañas (ADR-0009:
+  cada cliente en su pestaña = teléfono). **6.5.3** exportación y baja (ADR-0011: "exporta mis
+  datos" / "darme de baja" → `cancelado` sin borrar). **6.5.4** política documentada en la
+  memoria. **6.5.5** backups del sheet (ADR-0014: CSV por pestaña + manifest, retención 90
+  días, Celery beat). **6.5.6** re-consentimiento por versión (`politica_aceptada_vigente`).
+  **QA: pytest 69 → 72 → 76 → 84 → 87 → 95 passed** · ruff 0 · black · mypy. **6.5.1–6.5.3 y
+  6.5.6 desplegados en ORIGINAL** y validados E2E real en WhatsApp (excepto el flujo vivo de
+  re-consentimiento, que se probará cuando la política cambie de versión). **6.5.5 pendiente
+  de desplegar en ORIGINAL** (copiar + beat + reiniciar, con autorización).
 
 ### Timeline
 
@@ -265,6 +313,7 @@ Celery Worker (workers/tasks.py)
 | 7 (Ago 6) | **E2E real completo con Meta (5.4):** callback URL re-registrado (falso positivo del bloqueo), nota de voz real → Sheets → respuesta WhatsApp | ✅ |
 | 8 (Ago 10-12) | **Fase 5.5:** conjunto dorado (5.5.1, **34 casos/33 audios** en v5) + eval automatizado (5.5.2, `specs/eval_precision.py`) — monto ≥96.2% (prompt afinado) · **5.5.3 flujo de corrección 8/8 pasos + E2E real en WhatsApp el 11/08** · **5.5.4 ajustes iterativos + trampas A–G + eval real 100% peor de 3 (12/08, pytest 46/46)** | 🔄 (falta 5.5.5 suite en CI) |
 | 9 (Ago 13) | **Corrección DELTA (fix de integridad)** — hallazgo E2E real, trampa A enmendada + trampa H, ADR-0012, harness de eval a contrato delta, E2E real re-validado; **pytest 48/48** · eval 8 corridas (31–34 100%, peor monto 96.7% meta cumplida) · deuda conocida: caso 9 flaky | ✅ (fix delta completo; 5.5.5 sigue pendiente de CI) |
+| 10 (Ago 20) | **Fase 6.5 — privacidad, consentimiento y aislamiento:** canal de texto + consentimiento Ley 8968 (6.5.1, gate) + fix monto 0 + aislamiento por pestañas (6.5.2, ADR-0009) + exportación y baja (6.5.3, ADR-0011) + política documentada (6.5.4) + re-consentimiento por versión (6.5.6) + **backups del sheet (6.5.5, ADR-0014: CSV por pestaña + manifest, retención 90 días, Celery beat, volumen `backups_data`)** — **pytest 95/95**, 6.5.1–6.5.3 y 6.5.6 desplegados y validados E2E real en WhatsApp | 🔄 (6.5.5 falta desplegar en ORIGINAL) |
 
 ### Pendientes para MVP Comercial
 
@@ -279,6 +328,22 @@ Celery Worker (workers/tasks.py)
 - **Suite de precisión en CI (5.5.5):** ✅ **VERIFICADO 12/08/2026** — las trampas A–G corren
   vía `pytest tests/` en GitHub Actions y GitLab CI; el eval real (audios + API de OpenAI) se
   mantiene como paso manual por costo de API.
+- **Consentimiento Ley 8968 (6.5.1):** ✅ **COMPLETADO y desplegado 20/08/2026** — política
+  mínima + gate (sin aceptar la versión vigente no se procesa nada), pestaña `Consentimiento`,
+  canal de texto habilitado, fix de monto 0. Validado E2E real en WhatsApp.
+- **Aislamiento por pestañas (6.5.2, ADR-0009):** ✅ **COMPLETADO y desplegado 20/08/2026** —
+  cada cliente registra solo en su pestaña; Sheet1 queda como legado del dueño. Validado E2E
+  real.
+- **Exportación y baja (6.5.3, ADR-0011):** ✅ **COMPLETADO y desplegado 20/08/2026** —
+  "exporta mis datos" envía el historial del cliente por WhatsApp; "darme de baja" marca
+  `cancelado` sin borrar datos. Validado E2E real.
+- **Política documentada (6.5.4):** ✅ **COMPLETADO 20/08/2026** — texto de la política en la
+  memoria (`docs/politica-privacidad.md`), fuente de sincronía con el código.
+- **Re-consentimiento por versión (6.5.6):** ✅ **COMPLETADO y desplegado 20/08/2026** —
+  `politica_aceptada_vigente()`; el flujo vivo se probará cuando la política cambie de versión.
+- **Backups del sheet (6.5.5):** ✅ **COMPLETADO en BORRADOR el 20/08/2026** (ADR-0014) —
+  backup local diario (CSV por pestaña + manifest, retención 90 días, Celery beat);
+  **pendiente de desplegar en ORIGINAL**.
 - **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
 - **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
 - **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS.
@@ -317,9 +382,11 @@ docker compose exec app python -m pytest tests/ -v
 ## Uso
 
 1. Envía un mensaje o nota de voz al número de WhatsApp registrado.
-2. El bot procesa el audio (Whisper → GPT-4o-mini → Sheets).
-3. Recibís una confirmación por WhatsApp con los datos extraídos.
-4. Si no entiende el mensaje, recibís un mensaje de cortesía pidiendo reintentar.
+2. La primera vez, el bot envía la política de privacidad; respondé **ACEPTO** (o **NO ACEPTO**).
+3. El bot procesa el mensaje/audio (Whisper + GPT-4o-mini → Sheets, solo en tu pestaña).
+4. Recibís una confirmación por WhatsApp con los datos extraídos.
+5. Si no entiende el mensaje, recibís un mensaje de cortesía pidiendo reintentar.
+6. Podés pedir **"exporta mis datos"** o **"darme de baja"** en cualquier momento (ARCO).
 
 ### Modismos Soportados
 | Término | Significado |
@@ -366,6 +433,13 @@ docker compose exec app python -m pytest tests/ -v
   read-only, cap_drop) queda pendiente para la Fase 5 (hallazgo #12).
 - **CI/CD:** Sin secretos hardcodeados en pipelines. Variables inyectadas desde GitHub/GitLab Secrets.
 - **Rate Limiting:** 10 requests/minuto protegen contra abuso de API de OpenAI.
+- **Privacidad (Ley 8968):** Consentimiento explícito antes de procesar datos (pestaña
+  `Consentimiento`), aislamiento por pestañas por cliente, derechos ARCO (exportación y baja),
+  re-consentimiento si la política cambia de versión. El texto de la política vive en la
+  memoria (`docs/politica-privacidad.md`).
+- **Backups (6.5.5, ADR-0014):** copia local diaria del sheet (CSV por pestaña + manifest,
+  retención 90 días) en el volumen `backups_data`; destino intercambiable a un bucket cuando
+  haya servidor propio (5.1).
 
 ---
 
@@ -377,7 +451,7 @@ docker compose exec app python -m pytest tests/ -v
 | Ruff | `ruff check .` | 0 errores |
 | Mypy | `mypy app/ workers/ services/` (config, sin `--strict`, como la CI) | 0 errores en 15 archivos |
 | Mypy estricto | `mypy --strict` | **Success: no issues found in 15 source files (05/08/2026)** |
-| Pytest | `pytest tests/ -v` | 48/48 passed |
+| Pytest | `pytest tests/ -v` | 95/95 passed |
 
 ```bash
 # QA local (Docker)

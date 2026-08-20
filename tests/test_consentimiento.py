@@ -6,11 +6,14 @@ import pytest
 
 from app.core.utils import extraer_datos_texto
 from services.politica_service import (
+    POLITICA_VERSION,
     TEXTO_BAJA_CONFIRMADA,
     TEXTO_EXPORTACION_VACIA,
     TEXTO_POLITICA_PRIVACIDAD,
+    TEXTO_RE_CONSENTIMIENTO,
     detectar_respuesta_consentimiento,
     detectar_respuesta_exportacion_baja,
+    politica_aceptada_vigente,
 )
 from services.sheets_service import (
     CONSENT_HEADERS,
@@ -358,7 +361,10 @@ def test_async_loop_unicoy() -> None:
 async def test_pipeline_exporta_datos() -> None:
     """'exporta mis datos' con consentimiento → envía las filas del cliente, NO registra."""
     with (
-        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+        ),
         patch(
             "workers.tasks.obtener_transacciones_cliente",
             return_value=[
@@ -385,7 +391,10 @@ async def test_pipeline_exporta_datos() -> None:
 async def test_pipeline_exporta_sin_movimientos() -> None:
     """'exporta mis datos' sin filas → mensaje de vacío, nada registrado."""
     with (
-        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+        ),
         patch("workers.tasks.obtener_transacciones_cliente", return_value=[]),
         patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
         patch("workers.tasks.parse_financial_text") as mock_parser,
@@ -403,7 +412,10 @@ async def test_pipeline_exporta_sin_movimientos() -> None:
 async def test_pipeline_darme_de_baja() -> None:
     """'darme de baja' → registra 'cancelado' (sin borrar datos) y NO procesa transacción."""
     with (
-        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+        ),
         patch("workers.tasks.registrar_consentimiento") as mock_registrar,
         patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
         patch("workers.tasks.parse_financial_text") as mock_parser,
@@ -416,5 +428,69 @@ async def test_pipeline_darme_de_baja() -> None:
     assert result == ""
     mock_registrar.assert_called_once_with("50688888888", "cancelado")
     mock_whatsapp.assert_called_once_with(to_phone="50688888888", mensaje=TEXTO_BAJA_CONFIRMADA)
+    mock_parser.assert_not_called()
+    mock_sheet.assert_not_called()
+
+
+# ==========================================
+# 6.5.6 — RE-CONSENTIMIENTO POR VERSIÓN
+# ==========================================
+def test_politica_aceptada_vigente_casos() -> None:
+    """La aceptación es válida solo si estado=aceptado Y versión = la vigente."""
+    assert politica_aceptada_vigente(None) is False
+    assert politica_aceptada_vigente({"estado": "rechazado"}) is False
+    assert politica_aceptada_vigente({"estado": "cancelado"}) is False
+    assert politica_aceptada_vigente({"estado": "aceptado", "version_politica": "0.9"}) is False
+    assert politica_aceptada_vigente({"estado": "aceptado", "version_politica": "1"}) is True
+    assert (
+        politica_aceptada_vigente({"estado": "aceptado", "version_politica": POLITICA_VERSION})
+        is True
+    )
+
+
+@pytest.mark.anyio
+async def test_pipeline_version_anterior_pide_re_consentimiento() -> None:
+    """Aceptó una versión vieja → NO procesa; envía aviso + política nueva."""
+    with (
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": "0.9"},
+        ),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+        patch("workers.tasks.registrar_consentimiento") as mock_registrar,
+    ):
+        result = await _procesar_pipeline(
+            None, "50688888888", texto_entrante="gasté 5000 en el almuerzo"
+        )
+
+    assert result == ""
+    mensaje = mock_whatsapp.call_args[1]["mensaje"]
+    assert TEXTO_RE_CONSENTIMIENTO.format(version=POLITICA_VERSION) in mensaje
+    assert TEXTO_POLITICA_PRIVACIDAD in mensaje
+    mock_parser.assert_not_called()
+    mock_sheet.assert_not_called()
+    mock_registrar.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_pipeline_version_anterior_acepta_vigente() -> None:
+    """Re-acepta la política nueva → registra 'aceptado' (con la versión vigente) y confirma."""
+    with (
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": "0.9"},
+        ),
+        patch("workers.tasks.registrar_consentimiento") as mock_registrar,
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+    ):
+        result = await _procesar_pipeline(None, "50688888888", texto_entrante="ACEPTO")
+
+    assert result == ""
+    mock_registrar.assert_called_once_with("50688888888", "aceptado")
+    mock_whatsapp.assert_called_once()
     mock_parser.assert_not_called()
     mock_sheet.assert_not_called()

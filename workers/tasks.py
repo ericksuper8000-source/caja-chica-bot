@@ -7,19 +7,23 @@ import tempfile
 import httpx
 
 from app.config import settings
+from services.backup_service import crear_backup
 from services.openai_service import (
     parse_financial_text,
     transcribir_audio_whisper,
 )
 from services.politica_service import (
+    POLITICA_VERSION,
     TEXTO_ACEPTACION_CONFIRMADA,
     TEXTO_BAJA_CONFIRMADA,
     TEXTO_EXPORTACION_ENCABEZADO,
     TEXTO_EXPORTACION_VACIA,
     TEXTO_POLITICA_PRIVACIDAD,
+    TEXTO_RE_CONSENTIMIENTO,
     TEXTO_RECHAZO_REGISTRADO,
     detectar_respuesta_consentimiento,
     detectar_respuesta_exportacion_baja,
+    politica_aceptada_vigente,
 )
 from services.sheets_service import (
     append_transaction_to_sheet,
@@ -65,9 +69,10 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
-    # 2. GATE 6.5.1 — Consentimiento (ADR-0011, Ley 8968): sin aceptación no se procesa nada
+    # 2. GATE 6.5.1/6.5.6 — Consentimiento (ADR-0011, Ley 8968): sin aceptación de la
+    #    versión vigente no se procesa nada
     consentimiento = await obtener_consentimiento(sender_phone)
-    consentido = consentimiento is not None and consentimiento.get("estado") == "aceptado"
+    consentido = politica_aceptada_vigente(consentimiento)
 
     if not consentido:
         respuesta = detectar_respuesta_consentimiento(transcripcion)
@@ -88,10 +93,20 @@ async def _procesar_pipeline(
             )
             return file_path or ""
 
-        await enviar_mensaje_whatsapp(
-            to_phone=sender_phone,
-            mensaje=TEXTO_POLITICA_PRIVACIDAD,
-        )
+        if consentimiento is not None and consentimiento.get("estado") == "aceptado":
+            # 6.5.6 — Aceptó una versión anterior de la política: debe re-aceptar la vigente
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone,
+                mensaje=(
+                    f"{TEXTO_RE_CONSENTIMIENTO.format(version=POLITICA_VERSION)}\n\n"
+                    f"{TEXTO_POLITICA_PRIVACIDAD}"
+                ),
+            )
+        else:
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone,
+                mensaje=TEXTO_POLITICA_PRIVACIDAD,
+            )
         return file_path or ""
 
     # 3. Fase 6.5.3 — Derechos ARCO (Ley 8968): "exporta mis datos" / "darme de baja"
@@ -235,3 +250,19 @@ def procesar_mensaje_texto_task(sender_phone: str, texto: str) -> str:
     recibe directamente el cuerpo del mensaje, sin descargar ni transcribir audio.
     """
     return asyncio.run(_procesar_pipeline(None, sender_phone, texto_entrante=texto))
+
+
+@celery_app.task(name="workers.tasks.crear_backup_task")  # type: ignore[untyped-decorator]
+def crear_backup_task() -> str:
+    """
+    Fase 6.5.5 — Backup diario del sheet (ADR-0014). Programada por Celery beat
+    (ver celery_app.py); genera la copia local completa del spreadsheet y purga los
+    backups más viejos que la retención configurada (90 días por defecto).
+    Devuelve la ruta del .zip generado o "ERROR" si falló.
+    """
+    ruta = asyncio.run(crear_backup())
+    if ruta is None:
+        logger.error("crear_backup_task: el backup del sheet falló.")
+        return "ERROR"
+    logger.info(f"crear_backup_task: backup generado en {ruta}.")
+    return str(ruta)

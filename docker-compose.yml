@@ -26,6 +26,22 @@ services:
     volumes:
       - .:/code
       - ${GCP_KEY_PATH:-./secrets/gcp_key.json}:/secrets/gcp_key.json:ro
+      - backups_data:/backups
+    depends_on:
+      - redis
+      - db
+
+  beat:
+    build: .
+    command: celery -A workers.celery_app beat --loglevel=info
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/code
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp_key.json
+    volumes:
+      - .:/code
+      - ${GCP_KEY_PATH:-./secrets/gcp_key.json}:/secrets/gcp_key.json:ro
     depends_on:
       - redis
       - db
@@ -48,3 +64,4 @@ services:
 
 volumes:
   postgres_data:
+  backups_data:
