@@ -6,8 +6,11 @@ import pytest
 
 from app.core.utils import extraer_datos_texto
 from services.politica_service import (
+    TEXTO_BAJA_CONFIRMADA,
+    TEXTO_EXPORTACION_VACIA,
     TEXTO_POLITICA_PRIVACIDAD,
     detectar_respuesta_consentimiento,
+    detectar_respuesta_exportacion_baja,
 )
 from services.sheets_service import (
     CONSENT_HEADERS,
@@ -48,6 +51,28 @@ def test_politica_privacidad_cubre_elementos_ley_8968() -> None:
     assert "Ley 8968" in TEXTO_POLITICA_PRIVACIDAD
     assert "ACEPTO" in TEXTO_POLITICA_PRIVACIDAD
     assert "NO ACEPTO" in TEXTO_POLITICA_PRIVACIDAD
+
+
+# ==========================================
+# DETECCIÓN ARCO — EXPORTAR / BAJA (6.5.3)
+# ==========================================
+def test_detectar_exportar_datos() -> None:
+    assert detectar_respuesta_exportacion_baja("exporta mis datos") == "exportar"
+    assert detectar_respuesta_exportacion_baja("quiero exportar mi información") == "exportar"
+    assert detectar_respuesta_exportacion_baja("me das mis datos?") == "exportar"
+    assert detectar_respuesta_exportacion_baja("exportar datos") == "exportar"
+
+
+def test_detectar_darme_de_baja() -> None:
+    assert detectar_respuesta_exportacion_baja("darme de baja") == "baja"
+    assert detectar_respuesta_exportacion_baja("quiero darme de baja") == "baja"
+    assert detectar_respuesta_exportacion_baja("cancelar mi cuenta") == "baja"
+
+
+def test_detectar_arco_no_aplica() -> None:
+    assert detectar_respuesta_exportacion_baja("gasté 5000 en el almuerzo") is None
+    assert detectar_respuesta_exportacion_baja("") is None
+    assert detectar_respuesta_exportacion_baja("ACEPTO") is None
 
 
 # ==========================================
@@ -324,3 +349,72 @@ async def test_pipeline_sin_consentimiento_audio_no_parsea() -> None:
 def test_async_loop_unicoy() -> None:
     """El pipeline es invocado por un único asyncio.run() en cada tarea (ADR-0005)."""
     assert asyncio.iscoroutinefunction(_procesar_pipeline) is True
+
+
+# ==========================================
+# 6.5.3 — EXPORTACIÓN Y BAJA EN EL PIPELINE
+# ==========================================
+@pytest.mark.anyio
+async def test_pipeline_exporta_datos() -> None:
+    """'exporta mis datos' con consentimiento → envía las filas del cliente, NO registra."""
+    with (
+        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch(
+            "workers.tasks.obtener_transacciones_cliente",
+            return_value=[
+                ["2026-08-20 19:29:13", "-3000", "Alimentación", "Tres perros calientes"],
+                ["2026-08-20 19:30:00", "2500", "Ventas", "venta de camisetas"],
+            ],
+        ),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+    ):
+        result = await _procesar_pipeline(None, "50688888888", texto_entrante="exporta mis datos")
+
+    assert result == ""
+    mock_parser.assert_not_called()
+    mock_sheet.assert_not_called()
+    mensaje = mock_whatsapp.call_args[1]["mensaje"]
+    assert "Tres perros calientes" in mensaje
+    assert "-₡3000" in mensaje
+    assert "venta de camisetas" in mensaje
+
+
+@pytest.mark.anyio
+async def test_pipeline_exporta_sin_movimientos() -> None:
+    """'exporta mis datos' sin filas → mensaje de vacío, nada registrado."""
+    with (
+        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch("workers.tasks.obtener_transacciones_cliente", return_value=[]),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+    ):
+        result = await _procesar_pipeline(None, "50688888888", texto_entrante="exporta mis datos")
+
+    assert result == ""
+    mock_whatsapp.assert_called_once_with(to_phone="50688888888", mensaje=TEXTO_EXPORTACION_VACIA)
+    mock_parser.assert_not_called()
+    mock_sheet.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_pipeline_darme_de_baja() -> None:
+    """'darme de baja' → registra 'cancelado' (sin borrar datos) y NO procesa transacción."""
+    with (
+        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch("workers.tasks.registrar_consentimiento") as mock_registrar,
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+    ):
+        result = await _procesar_pipeline(
+            None, "50688888888", texto_entrante="quiero darme de baja"
+        )
+
+    assert result == ""
+    mock_registrar.assert_called_once_with("50688888888", "cancelado")
+    mock_whatsapp.assert_called_once_with(to_phone="50688888888", mensaje=TEXTO_BAJA_CONFIRMADA)
+    mock_parser.assert_not_called()
+    mock_sheet.assert_not_called()

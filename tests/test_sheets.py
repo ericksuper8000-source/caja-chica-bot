@@ -7,6 +7,7 @@ from gspread.utils import ValueInputOption
 from services.sheets_service import (
     append_transaction_to_sheet,
     get_sheets_client,
+    obtener_transacciones_cliente,
     update_last_transaction_to_sheet,
 )
 
@@ -193,6 +194,51 @@ async def test_append_transaction_cada_cliente_tiene_su_pestana(mock_get_sheets_
     assert mock_spreadsheet.worksheet.call_args_list[1].args[0] == "50622222222"
     mock_worksheet_a.append_row.assert_called_once()
     mock_worksheet_b.append_row.assert_called_once()
+
+
+@pytest.mark.anyio
+@patch("services.sheets_service.get_sheets_client")
+async def test_obtener_transacciones_cliente_retorna_filas(mock_get_sheets_client):
+    """6.5.3: 'exporta mis datos' lee la pestaña del cliente y omite los encabezados."""
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+
+    mock_worksheet.get_all_values.return_value = [
+        ["fecha", "monto", "categoria", "detalle", "telefono"],
+        ["2026-08-20 19:29:13", "-3000", "Alimentación", "Tres perros calientes", "50660646370"],
+    ]
+
+    rows = await obtener_transacciones_cliente("50660646370")
+
+    assert len(rows) == 1
+    assert rows[0][1] == "-3000"
+    mock_spreadsheet.worksheet.assert_called_once_with("50660646370")
+
+
+@pytest.mark.anyio
+@patch("services.sheets_service.get_sheets_client")
+async def test_obtener_transacciones_cliente_solo_encabezados(mock_get_sheets_client):
+    """6.5.3: pestaña solo con encabezados devuelve lista vacía (sin movimientos)."""
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+
+    mock_worksheet.get_all_values.return_value = [
+        ["fecha", "monto", "categoria", "detalle", "telefono"]
+    ]
+
+    rows = await obtener_transacciones_cliente("50660646370")
+
+    assert rows == []
 
 
 @pytest.mark.anyio
