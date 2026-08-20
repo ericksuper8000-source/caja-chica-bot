@@ -15,6 +15,9 @@ ENV/
 *.log
 local_volumes/
 
+# Celery beat runtime state (se regenera solo; no versionar)
+celerybeat-schedule*
+
 # ==========================================
 # Google Cloud Platform Credentials (Fase 3)
 # ==========================================
