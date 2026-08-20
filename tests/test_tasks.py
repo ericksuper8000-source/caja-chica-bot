@@ -3,6 +3,8 @@ import sys
 import tempfile
 from unittest.mock import MagicMock, patch
 
+from services.politica_service import POLITICA_VERSION
+
 EXPECTED_DIR = os.path.join(tempfile.gettempdir(), "caja_chica")
 EXPECTED_PATH = os.path.join(EXPECTED_DIR, "12345.ogg")
 
@@ -42,7 +44,7 @@ def test_download_audio_task_exito() -> None:
             ),
             patch(
                 "workers.tasks.obtener_consentimiento",
-                return_value={"estado": "aceptado"},
+                return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
             ),
             patch(
                 "workers.tasks.parse_financial_text",
@@ -122,7 +124,10 @@ def test_download_audio_task_parse_falla() -> None:
     """Verifica que si el parser falla, envía mensaje de error y no guarda en Sheet."""
     with (
         patch("workers.tasks.transcribir_audio_whisper", return_value="texto valido"),
-        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+        ),
         patch("workers.tasks.parse_financial_text", return_value=None),
         patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
         patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
@@ -152,7 +157,10 @@ def test_download_audio_task_monto_cero_pide_monto() -> None:
     """Hallazgo 20/08/2026: un monto 0 (mensaje sin precio) NO se registra; se pide el monto."""
     with (
         patch("workers.tasks.transcribir_audio_whisper", return_value="texto"),
-        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+        ),
         patch(
             "workers.tasks.parse_financial_text",
             return_value={
@@ -189,7 +197,10 @@ def test_download_audio_task_whisper_no_rompe_flujo_exitoso() -> None:
     """Valida que el flujo exitoso sigue funcionando como antes."""
     with (
         patch("workers.tasks.transcribir_audio_whisper", return_value="texto"),
-        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+        ),
         patch("workers.tasks.parse_financial_text", return_value={"categoria": "A", "monto": 100}),
         patch("workers.tasks.append_transaction_to_sheet"),
         patch("workers.tasks.enviar_mensaje_whatsapp"),
@@ -208,7 +219,10 @@ def test_download_audio_task_aclaracion_pide_aclaracion() -> None:
     """Verifica que un mensaje con dos flujos pide aclaración y NO guarda ni corrige."""
     with (
         patch("workers.tasks.transcribir_audio_whisper", return_value="texto"),
-        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+        ),
         patch(
             "workers.tasks.parse_financial_text",
             return_value={"accion": "aclaracion", "monto": None},
@@ -248,7 +262,10 @@ def test_download_audio_task_corregir_actualiza() -> None:
     }
     with (
         patch("workers.tasks.transcribir_audio_whisper", return_value="texto"),
-        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+        ),
         patch("workers.tasks.parse_financial_text", return_value=data_corregir),
         patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
         patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
@@ -278,7 +295,10 @@ def test_download_audio_task_corregir_sin_previa() -> None:
     """Verifica que si no hay transacción previa, avisa y NO crea una nueva."""
     with (
         patch("workers.tasks.transcribir_audio_whisper", return_value="texto"),
-        patch("workers.tasks.obtener_consentimiento", return_value={"estado": "aceptado"}),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+        ),
         patch(
             "workers.tasks.parse_financial_text",
             return_value={"accion": "corregir", "monto": 6000, "categoria": "Transporte"},
