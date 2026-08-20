@@ -100,6 +100,83 @@ def test_recibir_mensaje_webhook_payload_invalido() -> None:
     assert response.status_code == 422
 
 
+def test_recibir_mensaje_texto_despacha_tarea() -> None:
+    """Fase 6.5: un mensaje de TEXTO ('ACEPTO') se despacha al canal de consentimiento."""
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "1234567890",
+                "changes": [
+                    {
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {},
+                            "messages": [
+                                {
+                                    "from": "50660646370",
+                                    "id": "wamid.TEXTO01",
+                                    "timestamp": "1724166000",
+                                    "type": "text",
+                                    "text": {"body": "ACEPTO"},
+                                }
+                            ],
+                        },
+                        "field": "messages",
+                    }
+                ],
+            }
+        ],
+    }
+
+    with patch("app.main.procesar_mensaje_texto_task.delay") as mock_delay:
+        response = client.post("/v1/whatsapp/webhook", json=payload)
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "recibido"}
+    mock_delay.assert_called_once_with("50660646370", "ACEPTO")
+
+
+def test_recibir_mensaje_audio_no_despacha_texto() -> None:
+    """Fase 6.5: un audio NO debe disparar la tarea de texto (solo la de descarga)."""
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "1234567890",
+                "changes": [
+                    {
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {},
+                            "messages": [
+                                {
+                                    "from": "50660646370",
+                                    "id": "wamid.AUDIO01",
+                                    "timestamp": "1724166000",
+                                    "type": "audio",
+                                    "audio": {"id": "media_xyz", "mime_type": "audio/ogg"},
+                                }
+                            ],
+                        },
+                        "field": "messages",
+                    }
+                ],
+            }
+        ],
+    }
+
+    with (
+        patch("app.main.download_audio_task.delay") as mock_audio_delay,
+        patch("app.main.procesar_mensaje_texto_task.delay") as mock_texto_delay,
+    ):
+        response = client.post("/v1/whatsapp/webhook", json=payload)
+
+    assert response.status_code == 200
+    mock_audio_delay.assert_called_once_with("media_xyz", "50660646370")
+    mock_texto_delay.assert_not_called()
+
+
 TEST_APP_SECRET = "test_hmac_secret_key_123"
 
 

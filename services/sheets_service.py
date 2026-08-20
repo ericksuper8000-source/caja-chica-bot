@@ -7,10 +7,20 @@ import gspread
 from gspread.utils import ValueInputOption  # Importamos el enumerado para el tipado
 
 from app.config import settings
+from services.politica_service import POLITICA_VERSION
 
 logger = logging.getLogger(__name__)
 
 _sheets_client: Any = None
+
+# Fase 6.5.1 — Consentimiento (ADR-0011, Ley 8968). En MVP la "tabla usuarios"
+# se materializa como una pestaña del mismo Google Sheet (ADR-0002/0009).
+CONSENT_TAB_NAME = "Consentimiento"
+CONSENT_HEADERS = ["telefono", "estado", "fecha", "version_politica"]
+
+# Fase 6.5.2 — Aislamiento por pestañas (ADR-0009). Cada cliente escribe SOLO en su
+# pestaña (título = teléfono), creada perezosamente con estos encabezados.
+TRANSACTION_HEADERS = ["fecha", "monto", "categoria", "detalle", "telefono"]
 
 
 def get_sheets_client() -> Any:
@@ -29,13 +39,31 @@ def get_sheets_client() -> Any:
         raise e
 
 
-def _sync_append_row(spreadsheet_id: str, row_values: list[Any]) -> None:
+def _sync_get_client_worksheet(spreadsheet_id: str, sender_phone: str) -> Any:
     """
-    Operación puramente síncrona que interactúa con la API de Google Sheets.
+    Resuelve la pestaña del cliente por teléfono (título = sender_phone) y la crea con
+    encabezados si no existe (ADR-0009, aislamiento por pestañas). Cada cliente escribe
+    SOLO en su pestaña dentro del mismo spreadsheet.
     """
     client = get_sheets_client()
     spreadsheet = client.open_by_key(spreadsheet_id)
-    worksheet = spreadsheet.get_worksheet(0)
+    try:
+        worksheet = spreadsheet.worksheet(sender_phone)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=sender_phone, rows=100, cols=10)
+        worksheet.append_row(
+            TRANSACTION_HEADERS,
+            value_input_option=ValueInputOption.user_entered,
+        )
+    return worksheet
+
+
+def _sync_append_row(spreadsheet_id: str, row_values: list[Any], sender_phone: str) -> None:
+    """
+    Operación puramente síncrona que interactúa con la API de Google Sheets.
+    Escribe en la pestaña del cliente (aislamiento por pestañas, ADR-0009).
+    """
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
 
     # Se utiliza ValueInputOption.user_entered para cumplir con el tipado de mypy
     worksheet.append_row(row_values, value_input_option=ValueInputOption.user_entered)
@@ -44,12 +72,11 @@ def _sync_append_row(spreadsheet_id: str, row_values: list[Any]) -> None:
 def _sync_update_last_row(spreadsheet_id: str, sender_phone: str, row_values: list[Any]) -> None:
     """
     Operación síncrona: localiza la última fila cuyo teléfono coincida con el remitente
-    y reescribe sus celdas (monto, categoría, detalle y teléfono) conservando la fecha.
-    Lanza LookupError si el usuario no tiene transacciones previas.
+    en la pestaña del cliente (ADR-0009) y reescribe sus celdas (monto, categoría,
+    detalle y teléfono) conservando la fecha. Lanza LookupError si el usuario no tiene
+    transacciones previas.
     """
-    client = get_sheets_client()
-    spreadsheet = client.open_by_key(spreadsheet_id)
-    worksheet = spreadsheet.get_worksheet(0)
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
 
     phone_values = worksheet.col_values(5)
     matches = [i for i, phone in enumerate(phone_values, start=1) if phone == sender_phone]
@@ -67,12 +94,11 @@ def _sync_update_last_row(spreadsheet_id: str, sender_phone: str, row_values: li
 def _sync_read_last_row(spreadsheet_id: str, sender_phone: str) -> list[Any]:
     """
     Operación síncrona: lee la última fila cuyo teléfono coincida con el remitente
-    (columnas A:E) para poder fusionar el delta de una corrección con los valores
-    anteriores. Lanza LookupError si el usuario no tiene transacciones previas.
+    (columnas A:E) en la pestaña del cliente (ADR-0009) para poder fusionar el delta
+    de una corrección con los valores anteriores. Lanza LookupError si el usuario no
+    tiene transacciones previas.
     """
-    client = get_sheets_client()
-    spreadsheet = client.open_by_key(spreadsheet_id)
-    worksheet = spreadsheet.get_worksheet(0)
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
 
     phone_values = worksheet.col_values(5)
     matches = [i for i, phone in enumerate(phone_values, start=1) if phone == sender_phone]
@@ -89,7 +115,9 @@ def _merge_delta_con_ultima_fila(delta: dict[str, Any], fila_anterior: list[Any]
 
     Semántica de delta (plan-correccion-delta.md, hallazgo 13/08/2026): un campo que el
     LLM devuelve como None significa "el usuario no lo mencionó" → se conserva el valor
-    anterior. Un campo con valor se aplica. La fila previa viene como
+    anterior. Un campo con valor se aplica. Desde el 20/08/2026 un monto de 0 también se
+    trata como "no mencionado" (el 0 es un monto inválido que la IA no debe inventar) y
+    conserva el monto anterior. La fila previa viene como
     [fecha, monto, categoria, detalle, telefono] y se devuelve el row a escribir en B:E.
     """
     prev_monto = int(fila_anterior[1]) if len(fila_anterior) > 1 and fila_anterior[1] else 0
@@ -101,7 +129,7 @@ def _merge_delta_con_ultima_fila(delta: dict[str, Any], fila_anterior: list[Any]
         tipo = "Gasto" if prev_monto < 0 else "Ingreso"
 
     monto = delta.get("monto")
-    if monto is None:
+    if not monto:
         monto = abs(prev_monto)
 
     if tipo.lower() == "gasto" and monto > 0:
@@ -115,7 +143,8 @@ def _merge_delta_con_ultima_fila(delta: dict[str, Any], fila_anterior: list[Any]
 
 async def append_transaction_to_sheet(transaction_data: dict[str, Any], sender_phone: str) -> bool:
     """
-    Inserta una nueva fila en Google Sheets de manera asíncrona.
+    Inserta una nueva fila en Google Sheets de manera asíncrona, en la pestaña del
+    cliente (ADR-0009, aislamiento por pestañas; título = teléfono).
 
     La fila guarda también el teléfono del remitente (columna "teléfono"),
     base para localizar la última transacción del usuario en el flujo de
@@ -139,7 +168,7 @@ async def append_transaction_to_sheet(transaction_data: dict[str, Any], sender_p
             sender_phone,
         ]
 
-        await asyncio.to_thread(_sync_append_row, spreadsheet_id, row_values)
+        await asyncio.to_thread(_sync_append_row, spreadsheet_id, row_values, sender_phone)
 
         logger.info(f"Fila insertada con éxito en Sheets de forma asíncrona: {row_values}")
         return True
@@ -159,7 +188,8 @@ async def update_last_transaction_to_sheet(
     Actualiza la última transacción del remitente con los datos corregidos
     (flujo de corrección 5.5.3, ADR-0010) usando semántica de DELTA: los campos
     que el LLM devuelve como None se conservan de la fila anterior (corrección
-    parcial no destruye datos). Devuelve la fila final aplicada [monto, categoria,
+    parcial no destruye datos). Operación en la pestaña del cliente (ADR-0009,
+    aislamiento por pestañas). Devuelve la fila final aplicada [monto, categoria,
     detalle]; None si el usuario no tiene transacciones previas o hubo error de API.
     """
     spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
@@ -183,3 +213,132 @@ async def update_last_transaction_to_sheet(
     except Exception as e:
         logger.error(f"Error inesperado en el servicio de Sheets (corregir): {e}")
         return None
+
+
+# ==========================================
+# FASE 6.5.1 — CONSENTIMIENTO (ADR-0011, Ley 8968)
+# ==========================================
+def _sync_get_consent_worksheet(spreadsheet_id: str) -> Any:
+    """Devuelve la pestaña de consentimientos, creándola con encabezados si no existe."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    try:
+        worksheet = spreadsheet.worksheet(CONSENT_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=CONSENT_TAB_NAME, rows=100, cols=10)
+        worksheet.append_row(
+            CONSENT_HEADERS,
+            value_input_option=ValueInputOption.user_entered,
+        )
+    return worksheet
+
+
+def _sync_read_consent(spreadsheet_id: str, sender_phone: str) -> dict[str, Any] | None:
+    """
+    Operación síncrona: lee el registro de consentimiento del teléfono (columna A)
+    y retorna {'telefono', 'estado', 'fecha', 'version_politica'} o None si no existe.
+    """
+    worksheet = _sync_get_consent_worksheet(spreadsheet_id)
+    phones = worksheet.col_values(1)
+    matches = [i for i, phone in enumerate(phones, start=1) if phone == sender_phone]
+    if not matches:
+        return None
+
+    last_row = matches[-1]
+    values = worksheet.row_values(last_row)
+    if len(values) < 2 or not values[1]:
+        return None
+    return {
+        "telefono": values[0],
+        "estado": values[1],
+        "fecha": values[2] if len(values) > 2 else "",
+        "version_politica": values[3] if len(values) > 3 else "",
+    }
+
+
+def _sync_write_consent(spreadsheet_id: str, sender_phone: str, estado: str) -> None:
+    """Operación síncrona: registra (o actualiza) el estado de consentimiento del teléfono."""
+    worksheet = _sync_get_consent_worksheet(spreadsheet_id)
+
+    phones = worksheet.col_values(1)
+    matches = [i for i, phone in enumerate(phones, start=1) if phone == sender_phone]
+    fecha_actual = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+    if matches:
+        last_row = matches[-1]
+        worksheet.update(
+            f"B{last_row}:D{last_row}",
+            [[estado, fecha_actual, POLITICA_VERSION]],
+            value_input_option=ValueInputOption.user_entered,
+        )
+    else:
+        worksheet.append_row(
+            [sender_phone, estado, fecha_actual, POLITICA_VERSION],
+            value_input_option=ValueInputOption.user_entered,
+        )
+
+
+async def obtener_consentimiento(sender_phone: str) -> dict[str, Any] | None:
+    """
+    Consulta el estado de consentimiento del usuario en Google Sheets.
+    Retorna el registro completo o None si el usuario nunca respondió la política.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(_sync_read_consent, spreadsheet_id, sender_phone)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al leer consentimiento: {error}")
+        return None
+    except Exception as e:
+        logger.error(f"Error inesperado al leer consentimiento: {e}")
+        return None
+
+
+async def registrar_consentimiento(sender_phone: str, estado: str) -> bool:
+    """
+    Registra la respuesta del usuario a la política (estado: 'aceptado' o 'rechazado').
+    Retorna True si se persistió correctamente.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        await asyncio.to_thread(_sync_write_consent, spreadsheet_id, sender_phone, estado)
+        logger.info(f"Consentimiento {estado} registrado para {sender_phone}.")
+        return True
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al registrar consentimiento: {error}")
+        return False
+    except Exception as e:
+        logger.error(f"Error inesperado al registrar consentimiento: {e}")
+        return False
+
+
+# ==========================================
+# FASE 6.5.3 — DERECHOS ARCO: EXPORTACIÓN (ADR-0011, Ley 8968)
+# ==========================================
+def _sync_read_client_rows(spreadsheet_id: str, sender_phone: str) -> list[list[Any]]:
+    """
+    Operación síncrona: lee TODAS las filas de la pestaña del cliente (ADR-0009) sin
+    los encabezados ni filas vacías. Se usa para "exporta mis datos" (Fase 6.5.3).
+    """
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
+    rows = worksheet.get_all_values()
+    if rows and rows[0] == TRANSACTION_HEADERS:
+        rows = rows[1:]
+    return [r for r in rows if any(r)]
+
+
+async def obtener_transacciones_cliente(sender_phone: str) -> list[list[Any]]:
+    """
+    Lee todas las transacciones del cliente desde su pestaña ("exporta mis datos",
+    Fase 6.5.3, derechos ARCO). Retorna la lista de filas (sin encabezados) o [] si
+    el cliente no tiene movimientos o hubo un error.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(_sync_read_client_rows, spreadsheet_id, sender_phone)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al leer datos del cliente: {error}")
+        return []
+    except Exception as e:
+        logger.error(f"Error inesperado al leer datos del cliente: {e}")
+        return []
