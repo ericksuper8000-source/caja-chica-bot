@@ -48,6 +48,13 @@ TEXTO_BAJA_CONFIRMADA = (
     "querés reactivar tu cuenta, escribí 'ACEPTO'."
 )
 
+# Fase 6.5.6 — Re-consentimiento por cambio de versión (ADR-0011).
+TEXTO_RE_CONSENTIMIENTO = (
+    "La política de privacidad se actualizó a la versión {version}. "
+    "Para seguir usando el bot, leé la política nueva y respondé 'ACEPTO' "
+    "para volver a aceptarla."
+)
+
 
 def _normalizar(texto: str) -> str:
     """Normaliza el texto: minúsculas, sin tildes y con espacios colapsados."""
@@ -145,3 +152,29 @@ def detectar_respuesta_exportacion_baja(texto: str) -> Literal["exportar", "baja
         return "baja"
 
     return None
+
+
+# ==========================================
+# FASE 6.5.6 — RE-CONSENTIMIENTO POR VERSIÓN (ADR-0011)
+# ==========================================
+def _normalizar_version(version: str) -> str:
+    """Normaliza una versión para comparar (evita falsas diferencias: '1.0' vs '1')."""
+    v = str(version).strip()
+    while v.endswith(".0"):
+        v = v[:-2]
+    return v
+
+
+def politica_aceptada_vigente(consentimiento: dict[str, object] | None) -> bool:
+    """
+    True si el consentimiento es un 'aceptado' de la versión vigente de la política
+    (Fase 6.5.6, ADR-0011). Un 'aceptado' de una versión anterior queda pendiente de
+    re-consentimiento; cualquier otro estado (None, 'rechazado', 'cancelado') no pasa.
+    """
+    if consentimiento is None:
+        return False
+    if consentimiento.get("estado") != "aceptado":
+        return False
+    return _normalizar_version(
+        str(consentimiento.get("version_politica", ""))
+    ) == _normalizar_version(POLITICA_VERSION)
