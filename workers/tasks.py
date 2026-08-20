@@ -7,6 +7,7 @@ import tempfile
 import httpx
 
 from app.config import settings
+from services.backup_service import crear_backup
 from services.openai_service import (
     parse_financial_text,
     transcribir_audio_whisper,
@@ -249,3 +250,19 @@ def procesar_mensaje_texto_task(sender_phone: str, texto: str) -> str:
     recibe directamente el cuerpo del mensaje, sin descargar ni transcribir audio.
     """
     return asyncio.run(_procesar_pipeline(None, sender_phone, texto_entrante=texto))
+
+
+@celery_app.task(name="workers.tasks.crear_backup_task")  # type: ignore[untyped-decorator]
+def crear_backup_task() -> str:
+    """
+    Fase 6.5.5 — Backup diario del sheet (ADR-0014). Programada por Celery beat
+    (ver celery_app.py); genera la copia local completa del spreadsheet y purga los
+    backups más viejos que la retención configurada (90 días por defecto).
+    Devuelve la ruta del .zip generado o "ERROR" si falló.
+    """
+    ruta = asyncio.run(crear_backup())
+    if ruta is None:
+        logger.error("crear_backup_task: el backup del sheet falló.")
+        return "ERROR"
+    logger.info(f"crear_backup_task: backup generado en {ruta}.")
+    return str(ruta)
