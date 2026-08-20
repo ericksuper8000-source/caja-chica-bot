@@ -36,6 +36,18 @@ TEXTO_RECHAZO_REGISTRADO = (
     "'ACEPTO' para volver a intentarlo."
 )
 
+# Fase 6.5.3 — Derechos ARCO (Ley 8968): exportación y baja (ADR-0011).
+TEXTO_EXPORTACION_ENCABEZADO = "Estos son tus movimientos registrados:"
+TEXTO_EXPORTACION_VACIA = (
+    "No tenés movimientos registrados todavía. Enviame tu primer gasto o ingreso "
+    "para que empiece a llevar tu caja chica."
+)
+TEXTO_BAJA_CONFIRMADA = (
+    "Entendido. Tu cuenta quedó cancelada y ya no se registrarán tus movimientos. "
+    "Tus datos quedan guardados por si necesitás reclamarlos. Si fue un error o "
+    "querés reactivar tu cuenta, escribí 'ACEPTO'."
+)
+
 
 def _normalizar(texto: str) -> str:
     """Normaliza el texto: minúsculas, sin tildes y con espacios colapsados."""
@@ -90,3 +102,46 @@ def _contiene_negacion(texto_normalizado: str) -> bool:
             "no de acuerdo",
         )
     )
+
+
+def detectar_respuesta_exportacion_baja(texto: str) -> Literal["exportar", "baja"] | None:
+    """
+    Detecta si un mensaje pide exportar los datos ("exporta mis datos") o darse de
+    baja ("darme de baja") — derechos ARCO de la Ley 8968 (Fase 6.5.3, ADR-0011).
+    Retorna 'exportar', 'baja' o None si el mensaje no es uno de estos comandos.
+    """
+    normalizado = _normalizar(texto)
+    if not normalizado:
+        return None
+
+    if any(
+        marca in normalizado
+        for marca in (
+            "exporta mis datos",
+            "exportar mis datos",
+            "exporta mi informacion",
+            "exportar mi informacion",
+            "exportacion",
+            "exportar datos",
+            "mis datos",
+            "quiero mis datos",
+            "pedir mis datos",
+        )
+    ):
+        return "exportar"
+
+    if any(
+        marca in normalizado
+        for marca in (
+            "darme de baja",
+            "darme baja",
+            "me doy de baja",
+            "darme de baja del servicio",
+            "cancelar mi cuenta",
+            "cancelar cuenta",
+            "eliminar mi cuenta",
+        )
+    ):
+        return "baja"
+
+    return None

@@ -13,13 +13,18 @@ from services.openai_service import (
 )
 from services.politica_service import (
     TEXTO_ACEPTACION_CONFIRMADA,
+    TEXTO_BAJA_CONFIRMADA,
+    TEXTO_EXPORTACION_ENCABEZADO,
+    TEXTO_EXPORTACION_VACIA,
     TEXTO_POLITICA_PRIVACIDAD,
     TEXTO_RECHAZO_REGISTRADO,
     detectar_respuesta_consentimiento,
+    detectar_respuesta_exportacion_baja,
 )
 from services.sheets_service import (
     append_transaction_to_sheet,
     obtener_consentimiento,
+    obtener_transacciones_cliente,
     registrar_consentimiento,
     update_last_transaction_to_sheet,
 )
@@ -27,6 +32,20 @@ from services.whatsapp_service import enviar_mensaje_whatsapp
 from workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+def _formatear_movimiento(fila: list[str]) -> str:
+    """Formatea una fila de la pestaña del cliente para el mensaje de exportación (6.5.3)."""
+    fecha = fila[0] if len(fila) > 0 else ""
+    monto = fila[1] if len(fila) > 1 else ""
+    categoria = fila[2] if len(fila) > 2 else ""
+    detalle = fila[3] if len(fila) > 3 else ""
+    try:
+        valor = int(monto)
+        monto_formateado = f"-₡{abs(valor)}" if valor < 0 else f"₡{valor}"
+    except (TypeError, ValueError):
+        monto_formateado = str(monto)
+    return f"{fecha} · {monto_formateado} · {categoria} · {detalle}"
 
 
 async def _procesar_pipeline(
@@ -75,7 +94,34 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
-    # 3. Flujo financiero normal (solo con consentimiento aceptado)
+    # 3. Fase 6.5.3 — Derechos ARCO (Ley 8968): "exporta mis datos" / "darme de baja"
+    respuesta_arco = detectar_respuesta_exportacion_baja(transcripcion)
+
+    if respuesta_arco == "exportar":
+        filas = await obtener_transacciones_cliente(sender_phone)
+        if not filas:
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone,
+                mensaje=TEXTO_EXPORTACION_VACIA,
+            )
+            return file_path or ""
+
+        movimientos = "\n".join(_formatear_movimiento(fila) for fila in filas)
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone,
+            mensaje=f"{TEXTO_EXPORTACION_ENCABEZADO}\n{movimientos}",
+        )
+        return file_path or ""
+
+    if respuesta_arco == "baja":
+        await registrar_consentimiento(sender_phone, "cancelado")
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone,
+            mensaje=TEXTO_BAJA_CONFIRMADA,
+        )
+        return file_path or ""
+
+    # 4. Flujo financiero normal (solo con consentimiento aceptado)
     transaction_data = await parse_financial_text(transcripcion)
 
     if not transaction_data:

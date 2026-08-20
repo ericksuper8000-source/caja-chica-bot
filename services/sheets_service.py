@@ -310,3 +310,35 @@ async def registrar_consentimiento(sender_phone: str, estado: str) -> bool:
     except Exception as e:
         logger.error(f"Error inesperado al registrar consentimiento: {e}")
         return False
+
+
+# ==========================================
+# FASE 6.5.3 — DERECHOS ARCO: EXPORTACIÓN (ADR-0011, Ley 8968)
+# ==========================================
+def _sync_read_client_rows(spreadsheet_id: str, sender_phone: str) -> list[list[Any]]:
+    """
+    Operación síncrona: lee TODAS las filas de la pestaña del cliente (ADR-0009) sin
+    los encabezados ni filas vacías. Se usa para "exporta mis datos" (Fase 6.5.3).
+    """
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
+    rows = worksheet.get_all_values()
+    if rows and rows[0] == TRANSACTION_HEADERS:
+        rows = rows[1:]
+    return [r for r in rows if any(r)]
+
+
+async def obtener_transacciones_cliente(sender_phone: str) -> list[list[Any]]:
+    """
+    Lee todas las transacciones del cliente desde su pestaña ("exporta mis datos",
+    Fase 6.5.3, derechos ARCO). Retorna la lista de filas (sin encabezados) o [] si
+    el cliente no tiene movimientos o hubo un error.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(_sync_read_client_rows, spreadsheet_id, sender_phone)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al leer datos del cliente: {error}")
+        return []
+    except Exception as e:
+        logger.error(f"Error inesperado al leer datos del cliente: {e}")
+        return []
