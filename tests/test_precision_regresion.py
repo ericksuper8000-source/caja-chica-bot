@@ -15,8 +15,10 @@ Reglas cubiertas (ver session-log 12/08/2026 y stage-055.md):
 - G  'Otros' solo como último recurso (no refugio) -> eval 12/08.
 - H  Corrección parcial (solo monto) preserva categoría y detalle de la fila anterior
      -> hallazgo 13/08/2026.
+- I  Monto 0 NO es un monto válido: sin precio, monto va en null (no 0) -> hallazgo
+     20/08/2026 ("3 cajas de pañuelos" se guardaba con monto 0).
 
-Las reglas A-D y F-H se protegen con tests de CONTRATO de prompt: verifican que el system
+Las reglas A-D, F-H e I se protegen con tests de CONTRATO de prompt: verifican que el system
 prompt (SYSTEM_PROMPT_PARSE) contenga la regla. Si la promesa cambia, el prompt debe
 cambiarse CON su trampa al mismo tiempo. La regla E es un test de documentación del
 comportamiento esperado con transcripción correcta.
@@ -160,3 +162,19 @@ async def test_regla_e_transcripcion_correcta_tejas_da_600():
 
         assert resultado["monto"] == 600
         assert resultado["tipo_movimiento"].lower() == "gasto"
+
+
+# ------------------------------------------------------------------
+# REGLA I — Monto 0 NO es un monto válido (hallazgo 20/08/2026)
+# ------------------------------------------------------------------
+def test_regla_i_monto_cero_no_es_monto_valido():
+    """
+    Trampa I (hallazgo 20/08/2026): un mensaje sin precio ('3 cajas de pañuelos')
+    hacía que el LLM devolviera monto=0 en vez de null, y el sistema guardaba una
+    transacción de 0 colones. Regla: el 0 no es un monto válido; si no se menciona
+    dinero, monto va en null (y el pipeline pide el monto).
+    """
+    assert "0 (cero)" in _PROMPT
+    assert "no es un monto válido" in _PROMPT
+    assert "nunca lo inventes como 0" in _PROMPT
+    assert "nunca registres una transacción" in _PROMPT

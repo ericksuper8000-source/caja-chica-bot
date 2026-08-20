@@ -8,12 +8,17 @@ class AudioMedia(BaseModel):
     mime_type: str | None = None
 
 
+class TextContent(BaseModel):
+    body: str = ""
+
+
 class Message(BaseModel):
     from_: str = Field(alias="from")
     id: str = ""
     timestamp: str | None = None
     type: str = ""
     audio: AudioMedia | None = None
+    text: TextContent | None = None
 
 
 class Contact(BaseModel):
