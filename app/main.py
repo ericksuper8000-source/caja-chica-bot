@@ -9,10 +9,10 @@ from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.core.security import validar_firma_whatsapp
-from app.core.utils import extraer_datos_audio
+from app.core.utils import extraer_datos_audio, extraer_datos_texto
 from app.schemas.whatsapp import WebhookPayload
 from workers.celery_app import celery_app
-from workers.tasks import download_audio_task
+from workers.tasks import download_audio_task, procesar_mensaje_texto_task
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,14 @@ async def recibir_mensaje(request: Request, payload: WebhookPayload) -> dict[str
         download_audio_task.delay(datos_audio["media_id"], datos_audio["from_phone"])
         logger.info(f"Tarea enviada a Celery para el media_id: {datos_audio['media_id']}")
     else:
-        logger.debug("Mensaje recibido (no es audio o formato no soportado)")
+        datos_texto = extraer_datos_texto(payload.model_dump(by_alias=True))
+        if datos_texto:
+            logger.info(f"Texto detectado: {datos_texto}")
+            # Canal de texto (Fase 6.5 — consentimiento y comandos)
+            procesar_mensaje_texto_task.delay(datos_texto["from_phone"], datos_texto["texto"])
+            logger.info(f"Tarea de texto enviada a Celery para {datos_texto['from_phone']}")
+        else:
+            logger.debug("Mensaje recibido (no es audio, no es texto o formato no soportado)")
 
     # Retorno flexible para evitar ResponseValidationError
     return {"status": "recibido"}

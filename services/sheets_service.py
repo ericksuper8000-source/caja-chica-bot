@@ -7,10 +7,16 @@ import gspread
 from gspread.utils import ValueInputOption  # Importamos el enumerado para el tipado
 
 from app.config import settings
+from services.politica_service import POLITICA_VERSION
 
 logger = logging.getLogger(__name__)
 
 _sheets_client: Any = None
+
+# Fase 6.5.1 — Consentimiento (ADR-0011, Ley 8968). En MVP la "tabla usuarios"
+# se materializa como una pestaña del mismo Google Sheet (ADR-0002/0009).
+CONSENT_TAB_NAME = "Consentimiento"
+CONSENT_HEADERS = ["telefono", "estado", "fecha", "version_politica"]
 
 
 def get_sheets_client() -> Any:
@@ -183,3 +189,100 @@ async def update_last_transaction_to_sheet(
     except Exception as e:
         logger.error(f"Error inesperado en el servicio de Sheets (corregir): {e}")
         return None
+
+
+# ==========================================
+# FASE 6.5.1 — CONSENTIMIENTO (ADR-0011, Ley 8968)
+# ==========================================
+def _sync_get_consent_worksheet(spreadsheet_id: str) -> Any:
+    """Devuelve la pestaña de consentimientos, creándola con encabezados si no existe."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    try:
+        worksheet = spreadsheet.worksheet(CONSENT_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=CONSENT_TAB_NAME, rows=100, cols=10)
+        worksheet.append_row(
+            CONSENT_HEADERS,
+            value_input_option=ValueInputOption.user_entered,
+        )
+    return worksheet
+
+
+def _sync_read_consent(spreadsheet_id: str, sender_phone: str) -> dict[str, Any] | None:
+    """
+    Operación síncrona: lee el registro de consentimiento del teléfono (columna A)
+    y retorna {'telefono', 'estado', 'fecha', 'version_politica'} o None si no existe.
+    """
+    worksheet = _sync_get_consent_worksheet(spreadsheet_id)
+    phones = worksheet.col_values(1)
+    matches = [i for i, phone in enumerate(phones, start=1) if phone == sender_phone]
+    if not matches:
+        return None
+
+    last_row = matches[-1]
+    values = worksheet.row_values(last_row)
+    if len(values) < 2 or not values[1]:
+        return None
+    return {
+        "telefono": values[0],
+        "estado": values[1],
+        "fecha": values[2] if len(values) > 2 else "",
+        "version_politica": values[3] if len(values) > 3 else "",
+    }
+
+
+def _sync_write_consent(spreadsheet_id: str, sender_phone: str, estado: str) -> None:
+    """Operación síncrona: registra (o actualiza) el estado de consentimiento del teléfono."""
+    worksheet = _sync_get_consent_worksheet(spreadsheet_id)
+
+    phones = worksheet.col_values(1)
+    matches = [i for i, phone in enumerate(phones, start=1) if phone == sender_phone]
+    fecha_actual = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+    if matches:
+        last_row = matches[-1]
+        worksheet.update(
+            f"B{last_row}:D{last_row}",
+            [[estado, fecha_actual, POLITICA_VERSION]],
+            value_input_option=ValueInputOption.user_entered,
+        )
+    else:
+        worksheet.append_row(
+            [sender_phone, estado, fecha_actual, POLITICA_VERSION],
+            value_input_option=ValueInputOption.user_entered,
+        )
+
+
+async def obtener_consentimiento(sender_phone: str) -> dict[str, Any] | None:
+    """
+    Consulta el estado de consentimiento del usuario en Google Sheets.
+    Retorna el registro completo o None si el usuario nunca respondió la política.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(_sync_read_consent, spreadsheet_id, sender_phone)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al leer consentimiento: {error}")
+        return None
+    except Exception as e:
+        logger.error(f"Error inesperado al leer consentimiento: {e}")
+        return None
+
+
+async def registrar_consentimiento(sender_phone: str, estado: str) -> bool:
+    """
+    Registra la respuesta del usuario a la política (estado: 'aceptado' o 'rechazado').
+    Retorna True si se persistió correctamente.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        await asyncio.to_thread(_sync_write_consent, spreadsheet_id, sender_phone, estado)
+        logger.info(f"Consentimiento {estado} registrado para {sender_phone}.")
+        return True
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al registrar consentimiento: {error}")
+        return False
+    except Exception as e:
+        logger.error(f"Error inesperado al registrar consentimiento: {e}")
+        return False
