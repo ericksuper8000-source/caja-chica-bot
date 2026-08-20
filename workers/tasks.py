@@ -118,7 +118,7 @@ async def _procesar_pipeline(
             )
         return file_path or ""
 
-    if transaction_data.get("monto") is None:
+    if not transaction_data.get("monto"):
         await enviar_mensaje_whatsapp(
             to_phone=sender_phone,
             mensaje=(

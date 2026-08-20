@@ -95,7 +95,9 @@ def _merge_delta_con_ultima_fila(delta: dict[str, Any], fila_anterior: list[Any]
 
     Semántica de delta (plan-correccion-delta.md, hallazgo 13/08/2026): un campo que el
     LLM devuelve como None significa "el usuario no lo mencionó" → se conserva el valor
-    anterior. Un campo con valor se aplica. La fila previa viene como
+    anterior. Un campo con valor se aplica. Desde el 20/08/2026 un monto de 0 también se
+    trata como "no mencionado" (el 0 es un monto inválido que la IA no debe inventar) y
+    conserva el monto anterior. La fila previa viene como
     [fecha, monto, categoria, detalle, telefono] y se devuelve el row a escribir en B:E.
     """
     prev_monto = int(fila_anterior[1]) if len(fila_anterior) > 1 and fila_anterior[1] else 0
@@ -107,7 +109,7 @@ def _merge_delta_con_ultima_fila(delta: dict[str, Any], fila_anterior: list[Any]
         tipo = "Gasto" if prev_monto < 0 else "Ingreso"
 
     monto = delta.get("monto")
-    if monto is None:
+    if not monto:
         monto = abs(prev_monto)
 
     if tipo.lower() == "gasto" and monto > 0:

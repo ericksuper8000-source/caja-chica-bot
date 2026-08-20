@@ -154,6 +154,44 @@ async def test_update_last_transaction_correccion_parcial_preserva(mock_get_shee
 
 @pytest.mark.anyio
 @patch("services.sheets_service.get_sheets_client")
+async def test_update_last_transaction_correccion_monto_cero_conserva(mock_get_sheets_client):
+    """
+    Hallazgo 20/08/2026: una corrección cuyo delta trae monto=0 (la IA lo inventó en vez
+    de null) debe CONSERVAR el monto anterior, no pisarlo con 0.
+    """
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.get_worksheet.return_value = mock_worksheet
+
+    mock_worksheet.col_values.return_value = ["teléfono", "50611111111", "50688888888"]
+    # Fila previa: un gasto de transporte de 6000
+    mock_worksheet.row_values.return_value = [
+        "2026-08-20 18:00:00",
+        "-6000",
+        "Transporte",
+        "pasajes",
+        "50688888888",
+    ]
+
+    fake_transaction = {
+        "monto": 0,
+        "categoria": None,
+        "tipo_movimiento": None,
+        "detalle": None,
+    }
+
+    result = await update_last_transaction_to_sheet(fake_transaction, "50688888888")
+
+    # El monto anterior se conserva (-6000) y no se pisa con 0
+    assert result == [-6000, "Transporte", "pasajes"]
+
+
+@pytest.mark.anyio
+@patch("services.sheets_service.get_sheets_client")
 async def test_update_last_transaction_sin_previas(mock_get_sheets_client):
     """Prueba que si el usuario no tiene transacciones previas, devuelve None sin actualizar."""
     mock_client = MagicMock()
