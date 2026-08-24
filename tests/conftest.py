@@ -9,7 +9,7 @@ def mock_env_vars():
     os.environ["DATABASE_URL"] = "postgresql://postgres:password@localhost:5432/caja_chica_db"
     os.environ["REDIS_URL"] = "redis://localhost:6379/0"
     os.environ["ENVIRONMENT"] = "test"
-    os.environ["WHATSAPP_VERIFY_TOKEN"] = "***REDACTED_VERIFY_TOKEN***"
+    os.environ["WHATSAPP_VERIFY_TOKEN"] = "test_verify_token_local"
 
 
 # Configuración de pytest-asyncio para evitar warnings

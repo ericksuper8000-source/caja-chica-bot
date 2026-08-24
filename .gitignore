@@ -5,10 +5,12 @@ __pycache__/
 
 # Environments
 .env
+.env.test
 .venv
 env/
 venv/
 ENV/
+secrets/
 
 # Docker and OS files
 .DS_Store
