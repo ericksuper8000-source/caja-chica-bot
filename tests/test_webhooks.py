@@ -13,7 +13,7 @@ from app.main import app
 
 client = TestClient(app)
 
-TEST_VERIFY_TOKEN = "***REDACTED_VERIFY_TOKEN***"
+TEST_VERIFY_TOKEN = "test_verify_token_local"
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +45,7 @@ def test_verificar_webhook_handshake_exitoso() -> None:
     """Paso 1.1: Valida el handshake exitoso (GET) con el token correcto."""
     params = {
         "hub.mode": "subscribe",
-        "hub.verify_token": "***REDACTED_VERIFY_TOKEN***",
+        "hub.verify_token": "test_verify_token_local",
         "hub.challenge": "desafio_token_123",
     }
     response = client.get("/v1/whatsapp/webhook", params=params)
