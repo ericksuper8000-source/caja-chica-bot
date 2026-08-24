@@ -32,7 +32,7 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
 - **Validación de descarga 200 OK (3.8.2, a medias)** — Prueba directa contra servidores reales de Meta: subir nota de voz real → media_id → descargar con el fix respondió `200 OK` (archivo idéntico, 66.977 bytes).
 
 ### Verificación de Meta completada (05/08/2026)
-- **App Secret real aplicado** — El `.env` usaba un placeholder (`mi_clave_secreta_de_meta_super_segura`); el real (`***REDACTED_APP_SECRET***`, de Meta → Configuración → Básico) quedó configurado y el contenedor recreado (`docker compose up -d app`; un `restart` no basta).
+- **App Secret real aplicado** — El `.env` usaba un placeholder (`mi_clave_secreta_de_meta_super_segura`); el real (de Meta → Configuración → Básico, rotado el 2026-08-24) quedó configurado y el contenedor recreado (`docker compose up -d app`; un `restart` no basta).
 - **Firma HMAC-SHA256 validada matemáticamente** — El secret correcto reproduce la firma de Meta (`sha256=95ebcdd...`); el POST local con firma válida responde `200 {"status":"recibido"}` (el 403 desapareció).
 - **Suscripción WABA→App exitosa** — `POST /v26.0/<WABA>/subscribed_apps` → `{"success":true}`.
 - **Handshake de Meta** — `GET /v1/whatsapp/webhook` con `hub.challenge` responde 200.
