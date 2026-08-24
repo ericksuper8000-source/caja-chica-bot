@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 20/08/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 24/08/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -37,7 +37,28 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
 - **Suscripción WABA→App exitosa** — `POST /v26.0/<WABA>/subscribed_apps` → `{"success":true}`.
 - **Handshake de Meta** — `GET /v1/whatsapp/webhook` con `hub.challenge` responde 200.
 - **Pipeline de IA demostrado de punta a punta SIN Meta** — Con un audio real (`Almuerzo.m4a`): Whisper transcribió *"Se gastaron 2.500 colones en el almuerzo."*; GPT-4o-mini extrajo `{monto:2500, categoria:Alimentación, tipo:Gasto, detalle:Almuerzo}`; Google Sheets registró la fila `-2500 | Alimentación | Almuerzo` (verificada leyendo la hoja de vuelta).
-- **Nota de audio `.m4a`:** Whisper rechaza el codec AAC de los `.m4a` de iPhone ("Invalid file format"); convertirlos a WAV 16 kHz mono lo resuelve. Los `.ogg` (OPUS) de WhatsApp no tienen este problema.
+- **Nota de audio `.m4a`:** Whisper rechaza el codec AAC de los `.m4a` de iPhone ("Invalid file format"); convertirlos a WAV 16 kHz mono lo resuelve.   Los `.ogg` (OPUS) de WhatsApp no tienen este problema.
+
+### Seguridad: rotación de secretos y blindaje contra exposición (24/08/2026)
+- **Incidente:** el App Secret de WhatsApp y la llave de servicio de GCP quedaron expuestos en
+  claro en copias y documentación del proyecto (README, notas `.txt`, etc.). Respuesta:
+  rotación de ambos secretos, purga del historial de git y red de seguridad permanente.
+- **App Secret (`WHATSAPP_APP_SECRET`) rotado** desde Meta → Configuración → Básica → Reset;
+  nuevo valor en `C:\caja-chica-bot\.env` (gitignored) y contenedor recreado. La firma
+  HMAC-SHA256 del webhook se valida correctamente (Meta 403 → 200 `{"status":"recibido"}`).
+- **Llave GCP rotada y revocada:** nueva service account JSON en `secrets/` (gitignored); la
+  llave anterior revocada en Google Cloud. `get_sheets_client()` operativo.
+- **Purga de historial:** `git filter-repo` eliminó el App Secret y el `VERIFY_TOKEN` de todas
+  las ramas e historial (GitHub + GitLab verificados sin secretos). `gitleaks` en limpio.
+- **Pre-commit `gitleaks` activo:** bloquea cualquier commit con secretos; `.gitignore` cubre
+  `.env`, `.env.test`, `secrets/`. Red de seguridad ante cualquier copia o edición accidental.
+- **Regla anti-exposición:** nunca se imprimen valores reales de secretos en el chat ni en
+  documentación; se referencian por nombre de variable o `<REDACTED>` (el transcript se trata
+  como potencialmente persistido).
+- **Verificación E2E post-rotación (24/08/2026):** nota de voz real del cliente → webhook 200 →
+  `download_audio_task` → transcripción OpenAI → registro en Sheets → respuesta 200 a
+  `50660646370`. Flujo completo sano tras la rotación.
+- **`main` de GitLab re-protegida** tras quitarse temporalmente para el push de limpieza.
 
 ### E2E real completado (06/08/2026)
 - **El "bloqueo por verificación de empresa" era un FALSO POSITIVO:** la causa real de que
@@ -344,6 +365,11 @@ Celery Worker (workers/tasks.py)
 - **Backups del sheet (6.5.5):** ✅ **COMPLETADO en BORRADOR el 20/08/2026** (ADR-0014) —
   backup local diario (CSV por pestaña + manifest, retención 90 días, Celery beat);
   **pendiente de desplegar en ORIGINAL**.
+- **Seguridad: rotación de secretos y blindaje (24/08/2026):** App Secret (`WHATSAPP_APP_SECRET`)
+  y llave GCP expuestos en claro en copias/documentación → rotados y revocados; historial de git
+  purgado (git-filter-repo) en GitHub y GitLab; pre-commit `gitleaks` activo; `.gitignore`
+  cubre `.env`/`secrets/`. Webhook re-verificado 403 → 200 tras reset; E2E de audio OK. `main`
+  de GitLab re-protegida.
 - **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
 - **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
 - **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS.
@@ -440,6 +466,12 @@ docker compose exec app python -m pytest tests/ -v
 - **Backups (6.5.5, ADR-0014):** copia local diaria del sheet (CSV por pestaña + manifest,
   retención 90 días) en el volumen `backups_data`; destino intercambiable a un bucket cuando
   haya servidor propio (5.1).
+- **Rotación y blindaje de secretos (24/08/2026):** App Secret de WhatsApp y llave GCP
+  expuestos en claro en copias/documentación → rotados y revocados; historial de git purgado
+  (`git filter-repo`) en GitHub y GitLab; pre-commit `gitleaks` activo; `.gitignore` cubre
+  `.env`/`secrets/`. Webhook re-verificado 403 → 200 tras reset de App Secret, y E2E de audio
+  OK. Nunca se imprimen valores reales de secretos (se referencian por nombre o `<REDACTED>`).
+  `main` de GitLab re-protegida.
 
 ---
 
