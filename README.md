@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 24/08/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 25/08/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -335,6 +335,7 @@ Celery Worker (workers/tasks.py)
 | 8 (Ago 10-12) | **Fase 5.5:** conjunto dorado (5.5.1, **34 casos/33 audios** en v5) + eval automatizado (5.5.2, `specs/eval_precision.py`) — monto ≥96.2% (prompt afinado) · **5.5.3 flujo de corrección 8/8 pasos + E2E real en WhatsApp el 11/08** · **5.5.4 ajustes iterativos + trampas A–G + eval real 100% peor de 3 (12/08, pytest 46/46)** | 🔄 (falta 5.5.5 suite en CI) |
 | 9 (Ago 13) | **Corrección DELTA (fix de integridad)** — hallazgo E2E real, trampa A enmendada + trampa H, ADR-0012, harness de eval a contrato delta, E2E real re-validado; **pytest 48/48** · eval 8 corridas (31–34 100%, peor monto 96.7% meta cumplida) · deuda conocida: caso 9 flaky | ✅ (fix delta completo; 5.5.5 sigue pendiente de CI) |
 | 10 (Ago 20) | **Fase 6.5 — privacidad, consentimiento y aislamiento:** canal de texto + consentimiento Ley 8968 (6.5.1, gate) + fix monto 0 + aislamiento por pestañas (6.5.2, ADR-0009) + exportación y baja (6.5.3, ADR-0011) + política documentada (6.5.4) + re-consentimiento por versión (6.5.6) + **backups del sheet (6.5.5, ADR-0014: CSV por pestaña + manifest, retención 90 días, Celery beat, volumen `backups_data`)** — **pytest 95/95**, 6.5.1–6.5.3 y 6.5.6 desplegados y validados E2E real en WhatsApp | 🔄 (6.5.5 falta desplegar en ORIGINAL) |
+| 11 (Ago 25) | **Inicio de 5.1 — Despliegue producción:** dominio `cajachicacr.com` comprado vía Cloudflare (~$11/año) + cuenta Hetzner creada. Pendiente: crear servidor CX22, configurar DNS, instalar Docker + Caddy | 🔄 (5.1.0 ✅, 5.1 en curso) |
 
 ### Pendientes para MVP Comercial
 
@@ -372,11 +373,17 @@ Celery Worker (workers/tasks.py)
   de GitLab re-protegida.
 - **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
 - **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
-- **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS.
+- **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS. **Pre-requisito 5.1.0
+  COMPLETADO (25/08/2026):** dominio `cajachicacr.com` comprado vía Cloudflare (~$11/año,
+  WHOIS privacy gratis) + cuenta Hetzner creada con método de pago registrado. Siguiente
+  paso: crear servidor Hetzner CX22 (~$5.5/mes), configurar DNS en Cloudflare e instalar
+  Docker + Caddy.
 
 ---
 
 ## Instalación
+
+### Desarrollo Local (hoy)
 
 ```bash
 # 1. Clonar
@@ -395,6 +402,25 @@ curl http://localhost:8000/health
 
 # 5. Correr tests
 docker compose exec app python -m pytest tests/ -v
+```
+
+### Producción (próximamente — Fase 5.1)
+
+El bot se desplegará en **Hetzner CX22** (~$5.5/mes) con **Caddy** (SSL automático).
+Dominio: `cajachicacr.com` · Webhook: `api.cajachicacr.com`.
+
+```bash
+# En el servidor Hetzner (Ubuntu 24.04):
+# 1. Instalar Docker
+curl -fsSL https://get.docker.com | sh
+# 2. Clonar el repo
+git clone <repo-url> caja-chica-bot
+cd caja-chica-bot
+# 3. Configurar .env con credenciales de producción
+cp .env.example .env && nano .env
+# 4. Levantar todo
+docker compose up -d
+# 5. Caddy se configura automáticamente con el dominio
 ```
 
 ### Requisitos
