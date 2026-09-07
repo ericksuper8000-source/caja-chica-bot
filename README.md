@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 25/08/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 07/09/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -336,6 +336,7 @@ Celery Worker (workers/tasks.py)
 | 9 (Ago 13) | **Corrección DELTA (fix de integridad)** — hallazgo E2E real, trampa A enmendada + trampa H, ADR-0012, harness de eval a contrato delta, E2E real re-validado; **pytest 48/48** · eval 8 corridas (31–34 100%, peor monto 96.7% meta cumplida) · deuda conocida: caso 9 flaky | ✅ (fix delta completo; 5.5.5 sigue pendiente de CI) |
 | 10 (Ago 20) | **Fase 6.5 — privacidad, consentimiento y aislamiento:** canal de texto + consentimiento Ley 8968 (6.5.1, gate) + fix monto 0 + aislamiento por pestañas (6.5.2, ADR-0009) + exportación y baja (6.5.3, ADR-0011) + política documentada (6.5.4) + re-consentimiento por versión (6.5.6) + **backups del sheet (6.5.5, ADR-0014: CSV por pestaña + manifest, retención 90 días, Celery beat, volumen `backups_data`)** — **pytest 95/95**, 6.5.1–6.5.3 y 6.5.6 desplegados y validados E2E real en WhatsApp | 🔄 (6.5.5 falta desplegar en ORIGINAL) |
 | 11 (Ago 25) | **Inicio de 5.1 — Despliegue producción:** dominio `cajachicacr.com` comprado vía Cloudflare (~$11/año) + cuenta Hetzner creada. Pendiente: crear servidor CX22, configurar DNS, instalar Docker + Caddy | 🔄 (5.1.0 ✅, 5.1 en curso) |
+| 12 (Sep 07) | **5.1.1 Archivos de configuración preparados:** `docker-compose.prod.yml` (sin Postgres, health checks, red interna), `Caddyfile` (SSL automático), `.dockerignore`, `Dockerfile.prod` (USER no-root), `.env.production`, `setup-server.sh`, `deployment-guide.md`. Sincronizados al ORIGINAL. E2E re-validado (4 audios reales, <7s cada uno). | 🔄 (5.1.1 ✅, falta crear servidor Hetzner) |
 
 ### Pendientes para MVP Comercial
 
@@ -375,9 +376,12 @@ Celery Worker (workers/tasks.py)
 - **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
 - **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS. **Pre-requisito 5.1.0
   COMPLETADO (25/08/2026):** dominio `cajachicacr.com` comprado vía Cloudflare (~$11/año,
-  WHOIS privacy gratis) + cuenta Hetzner creada con método de pago registrado. Siguiente
-  paso: crear servidor Hetzner CX22 (~$5.5/mes), configurar DNS en Cloudflare e instalar
-  Docker + Caddy.
+  WHOIS privacy gratis) + cuenta Hetzner creada con método de pago registrado. **5.1.1
+  COMPLETADO (07/09/2026):** archivos de configuración preparados en BORRADOR y sincronizados
+  al ORIGINAL: `docker-compose.prod.yml`, `Caddyfile`, `.dockerignore`, `Dockerfile.prod`
+  (hardened, USER no-root), `.env.production`, `scripts/setup-server.sh`,
+  `docs/deployment-guide.md`. Siguiente paso: crear servidor Hetzner CX22 (~€4.59/mes),
+  configurar DNS en Cloudflare y desplegar.
 
 ---
 
@@ -404,23 +408,39 @@ curl http://localhost:8000/health
 docker compose exec app python -m pytest tests/ -v
 ```
 
-### Producción (próximamente — Fase 5.1)
+### Producción (archivos listos — Fase 5.1)
 
-El bot se desplegará en **Hetzner CX22** (~$5.5/mes) con **Caddy** (SSL automático).
-Dominio: `cajachicacr.com` · Webhook: `api.cajachicacr.com`.
+El bot se desplegará en **Hetzner CX22** (~€4.59/mes) con **Caddy** (SSL automático).
+Dominio: `cajachicacr.com`. Los archivos de configuración ya están preparados:
+
+| Archivo | Función |
+|---------|---------|
+| `docker-compose.prod.yml` | Deploy production (sin Postgres, health checks, red interna) |
+| `Caddyfile` | Reverse proxy + SSL automático Let's Encrypt |
+| `Dockerfile.prod` | Hardened (USER no-root, sin secretos en imagen) |
+| `.dockerignore` | Excluye .env, secrets/, docs/ de la imagen |
+| `.env.production` | Template de variables de entorno (sin secretos reales) |
+| `scripts/setup-server.sh` | Setup automatizado del servidor |
+| `docs/deployment-guide.md` | Guía paso a paso para el dueño |
 
 ```bash
 # En el servidor Hetzner (Ubuntu 24.04):
-# 1. Instalar Docker
-curl -fsSL https://get.docker.com | sh
-# 2. Clonar el repo
-git clone <repo-url> caja-chica-bot
-cd caja-chica-bot
-# 3. Configurar .env con credenciales de producción
-cp .env.example .env && nano .env
-# 4. Levantar todo
-docker compose up -d
-# 5. Caddy se configura automáticamente con el dominio
+# 1. Ejecutar setup
+curl -O https://raw.githubusercontent.com/ericksuper8000-source/caja-chica-bot/main/scripts/setup-server.sh
+bash setup-server.sh
+
+# 2. Configurar .env.production con credenciales reales
+nano /opt/caja-chica-bot/.env.production
+
+# 3. Copiar credenciales GCP
+mkdir -p secrets
+scp /ruta/a/gcp_key.json root@<IP>:/opt/caja-chica-bot/secrets/gcp_key.json
+
+# 4. Desplegar
+docker compose -f docker-compose.prod.yml up -d --build
+
+# 5. Verificar
+curl https://cajachicacr.com/health
 ```
 
 ### Requisitos
@@ -480,9 +500,9 @@ docker compose up -d
 - **Secretos:** `pydantic-settings` + variables de entorno. Prohibido hardcodear credenciales.
 - **GCP:** Archivo JSON de service account fuera del repo en `secrets/`, ignorado por `.gitignore`.
 - **HMAC:** Firma `X-Hub-Signature-256` validada en cada webhook entrante.
-- **Docker:** `build-essential` y capa `apt-get` eliminados de la imagen final. El
-  contenedor corre como root por ahora; el hardening (usuario no-root, filesystem
-  read-only, cap_drop) queda pendiente para la Fase 5 (hallazgo #12).
+- **Docker:** `Dockerfile.prod` hardened (USER no-root, `.dockerignore` excluye secretos).
+  El `Dockerfile` original sigue corriendo como root para desarrollo local; la producción
+  usa `Dockerfile.prod`.
 - **CI/CD:** Sin secretos hardcodeados en pipelines. Variables inyectadas desde GitHub/GitLab Secrets.
 - **Rate Limiting:** 10 requests/minuto protegen contra abuso de API de OpenAI.
 - **Privacidad (Ley 8968):** Consentimiento explícito antes de procesar datos (pestaña

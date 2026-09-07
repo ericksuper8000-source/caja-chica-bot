@@ -1,0 +1,37 @@
+# Caddyfile — Reverse proxy + SSL automático para cajachicacr.com
+# Caddy obtiene certificados SSL automáticamente vía Let's Encrypt
+
+# Webhook de WhatsApp — HTTPS automático
+cajachicacr.com {
+    # Health check endpoint
+    handle /health {
+        reverse_proxy app:8000
+    }
+
+    # Webhook de WhatsApp
+    handle /v1/whatsapp/webhook {
+        reverse_proxy app:8000
+    }
+
+    # Headers de seguridad
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+
+    # Rate limiting básico
+    rate_limit {
+        zone webhook {
+            key {remote_host}
+            events 100
+            window 1m
+        }
+    }
+
+    # Todo lo demás → app
+    handle {
+        reverse_proxy app:8000
+    }
+}
