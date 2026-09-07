@@ -7,7 +7,7 @@ FROM python:3.12-slim AS builder
 WORKDIR /build
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Stage 2: Runtime stage (hardened)
 FROM python:3.12-slim AS runtime
@@ -17,20 +17,20 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /code -s /sbin/nologin appus
 
 WORKDIR /code
 
-# Copiar dependencias del builder
-COPY --from=builder /root/.local /home/appuser/.local
+# Copiar dependencias del builder (instaladas globalmente)
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copiar código (excluido por .dockerignore: .env, secrets/, docs/, etc.)
 COPY . .
 
 # Asignar propiedad al usuario no-root
-RUN chown -R appuser:appuser /code /home/appuser
+RUN chown -R appuser:appuser /code
 
 # Cambiar a usuario no-root
 USER appuser
 
 # Variables de entorno
-ENV PATH=/home/appuser/.local/bin:$PATH
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/code

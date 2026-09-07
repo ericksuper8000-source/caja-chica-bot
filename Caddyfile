@@ -21,15 +21,6 @@ cajachicacr.com {
         -Server
     }
 
-    # Rate limiting básico
-    rate_limit {
-        zone webhook {
-            key {remote_host}
-            events 100
-            window 1m
-        }
-    }
-
     # Todo lo demás → app
     handle {
         reverse_proxy app:8000
