@@ -1,0 +1,40 @@
+# Dockerfile.prod — Hardened para producción
+# Soluciona: #12 (contenedor root), .dockerignore, sin secrets en imagen
+
+# Stage 1: Build dependencies
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Stage 2: Runtime stage (hardened)
+FROM python:3.12-slim AS runtime
+
+# Crear usuario no-root
+RUN groupadd -r appuser && useradd -r -g appuser -d /code -s /sbin/nologin appuser
+
+WORKDIR /code
+
+# Copiar dependencias del builder
+COPY --from=builder /root/.local /home/appuser/.local
+
+# Copiar código (excluido por .dockerignore: .env, secrets/, docs/, etc.)
+COPY . .
+
+# Asignar propiedad al usuario no-root
+RUN chown -R appuser:appuser /code /home/appuser
+
+# Cambiar a usuario no-root
+USER appuser
+
+# Variables de entorno
+ENV PATH=/home/appuser/.local/bin:$PATH
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/code
+
+EXPOSE 8000
+
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

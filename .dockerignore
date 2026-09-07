@@ -1,0 +1,47 @@
+# .dockerignore — Evitar que secretos y archivos innecesarios entren en la imagen Docker
+
+# Secretos y credenciales
+.env
+.env.*
+secrets/
+*.json
+!requirements.txt
+!package.json
+
+# Git
+.git
+.gitignore
+
+# Documentación
+docs/
+screenshots/
+_archive/
+*.md
+!README.md
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Backups
+backups/
+
+# Temp
+tmp/
+temp/
+*.log
