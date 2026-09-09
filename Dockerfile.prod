@@ -26,6 +26,7 @@ COPY . .
 
 # Asignar propiedad al usuario no-root
 RUN chown -R appuser:appuser /code
+RUN mkdir -p /backups && chown -R appuser:appuser /backups
 
 # Cambiar a usuario no-root
 USER appuser
