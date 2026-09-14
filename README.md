@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 07/09/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 14/09/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -240,7 +240,7 @@ Celery Worker (workers/tasks.py)
 |---|---|---|
 | Backend | Python 3.12 + FastAPI | Tipado nativo, rendimiento, ecosistema |
 | Tareas async | Celery + Redis (broker & backend) | Timeouts de Meta (< 2 s) exigen delegación |
-| Base de datos | PostgreSQL 15+ | Auditoría y multi-tenancy futuro (no usado en MVP) |
+| Base de datos | PostgreSQL 15+ (futuro, no usado en MVP) | Multi-tenancy cuando Sheets sature (ADR-0002) |
 | IA | OpenAI Whisper + GPT-4o-mini | Único provider en MVP; `transcribir_audio_whisper()` es fácil de reemplazar |
 | Persistencia MVP | Google Sheets vía `gspread` | 1 sheet con pestañas por cliente (ADR-0009, 6.5.2) |
 | Proxy | Caddy | SSL automático, cero configuración |
@@ -316,10 +316,17 @@ Celery Worker (workers/tasks.py)
   datos" / "darme de baja" → `cancelado` sin borrar). **6.5.4** política documentada en la
   memoria. **6.5.5** backups del sheet (ADR-0014: CSV por pestaña + manifest, retención 90
   días, Celery beat). **6.5.6** re-consentimiento por versión (`politica_aceptada_vigente`).
-  **QA: pytest 69 → 72 → 76 → 84 → 87 → 95 passed** · ruff 0 · black · mypy. **6.5.1–6.5.3 y
-  6.5.6 desplegados en ORIGINAL** y validados E2E real en WhatsApp (excepto el flujo vivo de
-  re-consentimiento, que se probará cuando la política cambie de versión). **6.5.5 pendiente
-  de desplegar en ORIGINAL** (copiar + beat + reiniciar, con autorización).
+  **QA: pytest 69 → 72 → 76 → 84 → 87 → 95 passed** · ruff 0 · black · mypy. **Todo
+  desplegado en ORIGINAL y validado E2E real en WhatsApp.**
+- **07/09/2026:** **Fase 5.1 — Despliegue Hetzner + Caddy.** Servidor CX23 (2 vCPU, 4 GB RAM,
+  40 GB SSD) en Falkenstein, IP `167.233.75.207`. Docker 29.8.0. Caddy con SSL automático
+  Let's Encrypt. `cajachicacr.com` con HTTPS. Bugs corregidos durante deploy: Dockerfile.prod
+  (uvicorn no encontrado) y Caddyfile (rate_limit no soportado). **5.1.2** webhook Meta
+  verificado (callback URL actualizado a `cajachicacr.com`).
+- **08/09/2026:** **`.env.production` sincronizado** (fix placeholders `<TU_*>` + `WHATSAPP_APP_SECRET`
+  `LARGO=32`). **E2E Hetzner 24/7 validado** (audio → transcription → Sheets → WhatsApp, sin ngrok).
+- **10/09/2026:** **Tester1 (Jacqueline) validado E2E en Hetzner.** Consentimiento aceptado + transacción
+  registrada en pestaña propia. Allowlist 2/5 (dueño + tester1), 3 cupos libres.
 
 ### Timeline
 
@@ -334,54 +341,26 @@ Celery Worker (workers/tasks.py)
 | 7 (Ago 6) | **E2E real completo con Meta (5.4):** callback URL re-registrado (falso positivo del bloqueo), nota de voz real → Sheets → respuesta WhatsApp | ✅ |
 | 8 (Ago 10-12) | **Fase 5.5:** conjunto dorado (5.5.1, **34 casos/33 audios** en v5) + eval automatizado (5.5.2, `specs/eval_precision.py`) — monto ≥96.2% (prompt afinado) · **5.5.3 flujo de corrección 8/8 pasos + E2E real en WhatsApp el 11/08** · **5.5.4 ajustes iterativos + trampas A–G + eval real 100% peor de 3 (12/08, pytest 46/46)** | 🔄 (falta 5.5.5 suite en CI) |
 | 9 (Ago 13) | **Corrección DELTA (fix de integridad)** — hallazgo E2E real, trampa A enmendada + trampa H, ADR-0012, harness de eval a contrato delta, E2E real re-validado; **pytest 48/48** · eval 8 corridas (31–34 100%, peor monto 96.7% meta cumplida) · deuda conocida: caso 9 flaky | ✅ (fix delta completo; 5.5.5 sigue pendiente de CI) |
-| 10 (Ago 20) | **Fase 6.5 — privacidad, consentimiento y aislamiento:** canal de texto + consentimiento Ley 8968 (6.5.1, gate) + fix monto 0 + aislamiento por pestañas (6.5.2, ADR-0009) + exportación y baja (6.5.3, ADR-0011) + política documentada (6.5.4) + re-consentimiento por versión (6.5.6) + **backups del sheet (6.5.5, ADR-0014: CSV por pestaña + manifest, retención 90 días, Celery beat, volumen `backups_data`)** — **pytest 95/95**, 6.5.1–6.5.3 y 6.5.6 desplegados y validados E2E real en WhatsApp | 🔄 (6.5.5 falta desplegar en ORIGINAL) |
+| 10 (Ago 20) | **Fase 6.5 — privacidad, consentimiento y aislamiento:** canal de texto + consentimiento Ley 8968 (6.5.1, gate) + fix monto 0 + aislamiento por pestañas (6.5.2, ADR-0009) + exportación y baja (6.5.3, ADR-0011) + política documentada (6.5.4) + re-consentimiento por versión (6.5.6) + **backups del sheet (6.5.5, ADR-0014: CSV por pestaña + manifest, retención 90 días, Celery beat, volumen `backups_data`)** — **pytest 95/95**, todo desplegado y validado E2E real en WhatsApp | ✅ |
 | 11 (Ago 25) | **Inicio de 5.1 — Despliegue producción:** dominio `cajachicacr.com` comprado vía Cloudflare (~$11/año) + cuenta Hetzner creada. Pendiente: crear servidor CX22, configurar DNS, instalar Docker + Caddy | 🔄 (5.1.0 ✅, 5.1 en curso) |
-| 12 (Sep 07) | **5.1.1 Archivos de configuración preparados:** `docker-compose.prod.yml` (sin Postgres, health checks, red interna), `Caddyfile` (SSL automático), `.dockerignore`, `Dockerfile.prod` (USER no-root), `.env.production`, `setup-server.sh`, `deployment-guide.md`. Sincronizados al ORIGINAL. E2E re-validado (4 audios reales, <7s cada uno). | 🔄 (5.1.1 ✅, falta crear servidor Hetzner) |
+| 12 (Sep 07) | **5.1 Despliegue Hetzner + Caddy:** servidor CX23 creado, Docker instalado, repos clonado, Caddy con SSL automático, `cajachicacr.com` con HTTPS. **5.1.2** webhook Meta verificado (callback URL actualizado). **08/09** `.env.production` sincronizado + E2E Hetzner 24/7 validado (sin ngrok). **10/09** tester1 (Jacqueline) validado E2E: consentimiento + transacción registrada. | 🔄 (Fase 8 en curso: 1 piloto activo, 2 pendientes — chip prepago CR) |
 
 ### Pendientes para MVP Comercial
 
-- **Desarrollo Local con ngrok (5.4):** Túnel para pipeline completo en local antes de producción. **✅ COMPLETADO 06/08/2026** — E2E real validado con nota de voz real (falso positivo del bloqueo; ver arriba). Habilita el **PUNTO A** (testeo interno, ≤5 destinatarios en la allowlist).
-- **Flujo de corrección por WhatsApp (5.5.3):** "corrige, eran 6 rojos no 5" → el bot actualiza la última transacción y confirma, en vez de crear una nueva (ADR-0010). Incluye pedir aclaración cuando el audio trae dos flujos (caso 27). **✅ COMPLETADO y validado E2E real 11/08/2026** (8/8 pasos, pytest 39/39; la 2ª nota de voz corrigió la última fila del teléfono en WhatsApp).
-- **Ajustes iterativos de precisión (5.5.4):** ✅ **COMPLETADO 12/08/2026 + refinamiento delta
-  13/08/2026** — trampas de regresión A–G+H (`tests/test_precision_regresion.py`) + reglas al
-  `SYSTEM_PROMPT_PARSE` (`services/openai_service.py:54`); corrección = **delta** (ADR-0012);
-  eval real **100% en 5 de 8 corridas, peor monto 96.7% (meta ≥95% cumplida)**. El caso 9
-  ("seis tejas" → "seis cejas") queda como **deuda conocida** (~37% flaky en 8 corridas,
-  pre-existente, candidato a ajuste iterativo).
-- **Suite de precisión en CI (5.5.5):** ✅ **VERIFICADO 12/08/2026** — las trampas A–G corren
-  vía `pytest tests/` en GitHub Actions y GitLab CI; el eval real (audios + API de OpenAI) se
-  mantiene como paso manual por costo de API.
-- **Consentimiento Ley 8968 (6.5.1):** ✅ **COMPLETADO y desplegado 20/08/2026** — política
-  mínima + gate (sin aceptar la versión vigente no se procesa nada), pestaña `Consentimiento`,
-  canal de texto habilitado, fix de monto 0. Validado E2E real en WhatsApp.
-- **Aislamiento por pestañas (6.5.2, ADR-0009):** ✅ **COMPLETADO y desplegado 20/08/2026** —
-  cada cliente registra solo en su pestaña; Sheet1 queda como legado del dueño. Validado E2E
-  real.
-- **Exportación y baja (6.5.3, ADR-0011):** ✅ **COMPLETADO y desplegado 20/08/2026** —
-  "exporta mis datos" envía el historial del cliente por WhatsApp; "darme de baja" marca
-  `cancelado` sin borrar datos. Validado E2E real.
-- **Política documentada (6.5.4):** ✅ **COMPLETADO 20/08/2026** — texto de la política en la
-  memoria (`docs/politica-privacidad.md`), fuente de sincronía con el código.
-- **Re-consentimiento por versión (6.5.6):** ✅ **COMPLETADO y desplegado 20/08/2026** —
-  `politica_aceptada_vigente()`; el flujo vivo se probará cuando la política cambie de versión.
-- **Backups del sheet (6.5.5):** ✅ **COMPLETADO en BORRADOR el 20/08/2026** (ADR-0014) —
-  backup local diario (CSV por pestaña + manifest, retención 90 días, Celery beat);
-  **pendiente de desplegar en ORIGINAL**.
-- **Seguridad: rotación de secretos y blindaje (24/08/2026):** App Secret (`WHATSAPP_APP_SECRET`)
-  y llave GCP expuestos en claro en copias/documentación → rotados y revocados; historial de git
-  purgado (git-filter-repo) en GitHub y GitLab; pre-commit `gitleaks` activo; `.gitignore`
-  cubre `.env`/`secrets/`. Webhook re-verificado 403 → 200 tras reset; E2E de audio OK. `main`
-  de GitLab re-protegida.
-- **Onboarding Automatizado (6.1):** Mapeo dinámico clientes → spreadsheet por número de teléfono.
-- **Autenticación Simplificada (6.3):** Registro inicial por WhatsApp (teléfono = identidad).
-- **Despliegue Hetzner + Caddy (5.1):** Producción con HTTPS. **Pre-requisito 5.1.0
-  COMPLETADO (25/08/2026):** dominio `cajachicacr.com` comprado vía Cloudflare (~$11/año,
-  WHOIS privacy gratis) + cuenta Hetzner creada con método de pago registrado. **5.1.1
-  COMPLETADO (07/09/2026):** archivos de configuración preparados en BORRADOR y sincronizados
-  al ORIGINAL: `docker-compose.prod.yml`, `Caddyfile`, `.dockerignore`, `Dockerfile.prod`
-  (hardened, USER no-root), `.env.production`, `scripts/setup-server.sh`,
-  `docs/deployment-guide.md`. Siguiente paso: crear servidor Hetzner CX22 (~€4.59/mes),
-  configurar DNS en Cloudflare y desplegar.
+- **Desarrollo Local con ngrok (5.4):** ✅ **COMPLETADO 06/08/2026** — E2E real validado. PUNTO A alcanzado.
+- **Flujo de corrección por WhatsApp (5.5.3):** ✅ **COMPLETADO 11/08/2026** — 8/8 pasos, E2E real validado.
+- **Ajustes iterativos de precisión (5.5.4):** ✅ **COMPLETADO 12/08/2026 + refinamiento delta 13/08/2026** — trampas A–G+H, corrección = delta (ADR-0012), eval real 100% peor de 3. Deuda conocida: caso 9 flaky.
+- **Suite de precisión en CI (5.5.5):** ✅ **VERIFICADO 12/08/2026** — trampas A–G vía `pytest tests/` en CI.
+- **Consentimiento Ley 8968 (6.5.1):** ✅ **COMPLETADO y desplegado 20/08/2026** — gate + canal de texto + fix monto 0.
+- **Aislamiento por pestañas (6.5.2):** ✅ **COMPLETADO y desplegado 20/08/2026** — ADR-0009.
+- **Exportación y baja (6.5.3):** ✅ **COMPLETADO y desplegado 20/08/2026** — ADR-0011.
+- **Política documentada (6.5.4):** ✅ **COMPLETADO 20/08/2026**.
+- **Re-consentimiento por versión (6.5.6):** ✅ **COMPLETADO y desplegado 20/08/2026**.
+- **Backups del sheet (6.5.5):** ✅ **COMPLETADO y desplegado 20/08/2026** — ADR-0014, Celery beat, volumen `backups_data`.
+- **Despliegue Hetzner + Caddy (5.1):** ✅ **DESPLEGADO 07/09/2026** — CX23, HTTPS funcional en `cajachicacr.com`, webhook Meta verificado (07/09), `.env.production` sincronizado (08/09).
+- **Piloto fase 1 (familia):** 🔄 1 piloto activo (Jacqueline, E2E validado 10/09/2026), 2 pendientes (Triana, Danny — esperando chip prepago CR).
+- **Onboarding Automatizado (6.1):** ⬜ Pendiente (se construye después del pilotaje).
+- **Autenticación Simplificada (6.3):** ⬜ Pendiente.
 
 ---
 
@@ -408,10 +387,10 @@ curl http://localhost:8000/health
 docker compose exec app python -m pytest tests/ -v
 ```
 
-### Producción (archivos listos — Fase 5.1)
+### Producción (desplegado — Fase 5.1, 07/09/2026)
 
-El bot se desplegará en **Hetzner CX22** (~€4.59/mes) con **Caddy** (SSL automático).
-Dominio: `cajachicacr.com`. Los archivos de configuración ya están preparados:
+El bot está desplegado en **Hetzner CX23** ($7.09/mes) con **Caddy** (SSL automático).
+Dominio: `cajachicacr.com`. IP: `167.233.75.207`.
 
 | Archivo | Función |
 |---------|---------|
