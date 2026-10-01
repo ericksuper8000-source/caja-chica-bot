@@ -1,13 +1,29 @@
 ﻿#!/usr/bin/env python3
 import asyncio
+import json
 import logging
 import os
 import tempfile
+import time
+from typing import Any
 
 import httpx
+import redis.asyncio as aioredis
 
 from app.config import settings
 from services.backup_service import crear_backup
+from services.duplicado_service import (
+    TEXTO_CONFIRMACION_DUPLICADO,
+    TEXTO_DUPLICADO_CONFIRMADO,
+    TEXTO_DUPLICADO_DESCARTADO,
+    TTL_DEDUPE_SEGUNDOS,
+    clave_pendiente,
+    clave_ultimo,
+    detectar_confirmacion_duplicado,
+    es_mismo_mismo_momento,
+    es_mismo_reenvio,
+    hash_transaccion,
+)
 from services.openai_service import (
     parse_financial_text,
     transcribir_audio_whisper,
@@ -36,6 +52,122 @@ from services.whatsapp_service import enviar_mensaje_whatsapp
 from workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+# ==========================================
+# 8.6.2 — IDEMPOTENCIA ANTI-DOBLE-TAP (helpers)
+# ==========================================
+# Regla de seguridad (rompe-si a): si Redis falla, NO se bloquea al usuario. El dedupe
+# es una comodidad; perderlo es Acceptable, dejar de registrar transacciones NO.
+async def _dedupe_redis() -> "aioredis.Redis":
+    cliente = aioredis.from_url(  # type: ignore[no-untyped-call]
+        settings.REDIS_URL, socket_connect_timeout=3
+    )
+    return cliente  # type: ignore[no-any-return]
+
+
+def _media_id_de(file_path: str | None) -> str | None:
+    """El media_id de Meta es el nombre del archivo temporal (`{media_id}.ogg`)."""
+    if not file_path:
+        return None
+    return os.path.splitext(os.path.basename(file_path))[0] or None
+
+
+async def _leer_ultimo_registro(sender_phone: str) -> dict[str, Any] | None:
+    try:
+        r = await _dedupe_redis()
+        try:
+            crudo = await r.get(clave_ultimo(sender_phone))
+        finally:
+            await r.aclose()
+        if not crudo:
+            return None
+        if isinstance(crudo, bytes):
+            crudo = crudo.decode("utf-8")
+        return json.loads(crudo)  # type: ignore[no-any-return]
+    except Exception as exc:  # noqa: BLE001 - degradar a "no duplicado"
+        logger.warning("dedupe: no se pudo leer el último registro (%s)", exc)
+        return None
+
+
+async def _marcar_ultimo_registro(
+    sender_phone: str, transaction_data: dict[str, Any], media_id: str | None
+) -> None:
+    try:
+        r = await _dedupe_redis()
+        try:
+            await r.set(
+                clave_ultimo(sender_phone),
+                json.dumps(
+                    {
+                        "hash": hash_transaccion(transaction_data),
+                        "media_id": media_id,
+                        "ts": int(time.time()),
+                    }
+                ),
+                ex=TTL_DEDUPE_SEGUNDOS,
+            )
+        finally:
+            await r.aclose()
+    except Exception as exc:  # noqa: BLE001 - degradar a "no duplicado"
+        logger.warning("dedupe: no se pudo marcar el registro (%s)", exc)
+
+
+async def _leer_pendiente(sender_phone: str) -> dict[str, Any] | None:
+    try:
+        r = await _dedupe_redis()
+        try:
+            crudo = await r.get(clave_pendiente(sender_phone))
+        finally:
+            await r.aclose()
+        if not crudo:
+            return None
+        if isinstance(crudo, bytes):
+            crudo = crudo.decode("utf-8")
+        return json.loads(crudo)  # type: ignore[no-any-return]
+    except Exception as exc:  # noqa: BLE001 - degradar a "sin pendiente"
+        logger.warning("dedupe: no se pudo leer la pendiente (%s)", exc)
+        return None
+
+
+async def _guardar_pendiente(sender_phone: str, transaction_data: dict[str, Any]) -> None:
+    try:
+        r = await _dedupe_redis()
+        try:
+            await r.set(
+                clave_pendiente(sender_phone),
+                json.dumps(transaction_data),
+                ex=TTL_DEDUPE_SEGUNDOS,
+            )
+        finally:
+            await r.aclose()
+    except Exception as exc:  # noqa: BLE001 - sin pendiente, el usuario reintenta
+        logger.warning("dedupe: no se pudo guardar la pendiente (%s)", exc)
+
+
+async def _borrar_pendiente(sender_phone: str) -> None:
+    try:
+        r = await _dedupe_redis()
+        try:
+            await r.delete(clave_pendiente(sender_phone))
+        finally:
+            await r.aclose()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("dedupe: no se pudo borrar la pendiente (%s)", exc)
+
+
+async def _es_duplicado(
+    transaction_data: dict[str, Any], sender_phone: str, media_id: str | None
+) -> bool:
+    """True si es el mismo movimiento ya registrado (reenvío o triple toque)."""
+    previo = await _leer_ultimo_registro(sender_phone)
+    if previo is None:
+        return False
+    if es_mismo_reenvio(media_id, previo.get("media_id")):
+        return True
+    return es_mismo_mismo_momento(
+        previo.get("hash"), previo.get("ts"), hash_transaccion(transaction_data), int(time.time())
+    )
 
 
 def _formatear_movimiento(fila: list[str]) -> str:
@@ -136,7 +268,28 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
-    # 4. Flujo financiero normal (solo con consentimiento aceptado)
+    # 4. 8.6.2 — Confirmación de duplicado (va ANTES del parse: "sí" no trae monto)
+    pendiente = await _leer_pendiente(sender_phone)
+    if pendiente is not None:
+        decision = detectar_confirmacion_duplicado(transcripcion)
+        if decision == "otro":
+            await _borrar_pendiente(sender_phone)
+            await append_transaction_to_sheet(pendiente, sender_phone)
+            await _marcar_ultimo_registro(sender_phone, pendiente, None)
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone,
+                mensaje=TEXTO_DUPLICADO_CONFIRMADO,
+            )
+            return file_path or ""
+        if decision == "mismo":
+            await _borrar_pendiente(sender_phone)
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone,
+                mensaje=TEXTO_DUPLICADO_DESCARTADO,
+            )
+            return file_path or ""
+
+    # 5. Flujo financiero normal (solo con consentimiento aceptado)
     transaction_data = await parse_financial_text(transcripcion)
 
     if not transaction_data:
@@ -204,7 +357,23 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
-    await append_transaction_to_sheet(transaction_data, sender_phone)
+    if accion == "registrar":
+        media_id = _media_id_de(file_path)
+
+        if await _es_duplicado(transaction_data, sender_phone, media_id):
+            await _guardar_pendiente(sender_phone, transaction_data)
+            logger.info("dedupe: posible duplicado detectado, se pregunta antes de guardar.")
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone,
+                mensaje=TEXTO_CONFIRMACION_DUPLICADO,
+            )
+            return file_path or ""
+
+        await append_transaction_to_sheet(transaction_data, sender_phone)
+        await _marcar_ultimo_registro(sender_phone, transaction_data, media_id)
+    else:
+        await append_transaction_to_sheet(transaction_data, sender_phone)
+
     await enviar_mensaje_whatsapp(
         to_phone=sender_phone,
         mensaje=(

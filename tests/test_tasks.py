@@ -1,8 +1,14 @@
 import os
 import sys
 import tempfile
-from unittest.mock import MagicMock, patch
+from contextlib import ExitStack
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from services.duplicado_service import (
+    TEXTO_CONFIRMACION_DUPLICADO,
+    TEXTO_DUPLICADO_CONFIRMADO,
+    TEXTO_DUPLICADO_DESCARTADO,
+)
 from services.politica_service import POLITICA_VERSION
 
 EXPECTED_DIR = os.path.join(tempfile.gettempdir(), "caja_chica")
@@ -325,3 +331,177 @@ def test_download_audio_task_corregir_sin_previa() -> None:
                 "Mandame primero el movimiento."
             ),
         )
+
+
+# ==========================================
+# 8.6.2 — IDEMPOTENCIA ANTI-DOBLE-TAP
+# ==========================================
+class _FakeRedis:
+    """Redis en memoria para probar el dedupe sin depender del servicio real."""
+
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self.store.get(key)
+
+    async def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self.store[key] = value
+
+    async def delete(self, key: str) -> None:
+        self.store.pop(key, None)
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _entrada_registro(monto: int, categoria: str, detalle: str) -> dict[str, object]:
+    return {
+        "accion": "registrar",
+        "monto": monto,
+        "categoria": categoria,
+        "tipo_movimiento": "Gasto",
+        "detalle": detalle,
+    }
+
+
+def _contexto_8_6_2(
+    redis_falso: _FakeRedis, parse_result: object, transcripcion: str | None = None
+):
+    """
+    Patches del pipeline para las pruebas de 8.6.2. Usa ExitStack para no depender del
+    orden de índices. `settings` va mockeado porque `download_audio_task` aborta sin token
+    (misma lección de hermeticidad que la trampa J). `transcripcion` solo hace falta para
+    el canal de audio, que pasa por Whisper.
+    """
+    stack = ExitStack()
+    mocks = {
+        "wa": stack.enter_context(patch("workers.tasks.enviar_mensaje_whatsapp")),
+        "sheet": stack.enter_context(patch("workers.tasks.append_transaction_to_sheet")),
+        "redis": stack.enter_context(
+            patch("workers.tasks._dedupe_redis", new=AsyncMock(return_value=redis_falso))
+        ),
+        "settings": stack.enter_context(patch("workers.tasks.settings")),
+        "consent": stack.enter_context(
+            patch(
+                "workers.tasks.obtener_consentimiento",
+                return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+            )
+        ),
+        "parse": stack.enter_context(
+            patch("workers.tasks.parse_financial_text", return_value=parse_result)
+        ),
+    }
+    if transcripcion is not None:
+        mocks["whisper"] = stack.enter_context(
+            patch("workers.tasks.transcribir_audio_whisper", return_value=transcripcion)
+        )
+    for target in ("workers.tasks.httpx.Client", "workers.tasks.os.makedirs"):
+        stack.enter_context(patch(target))
+    stack.enter_context(patch("workers.tasks.open", create=True))
+    return stack, mocks
+
+
+def test_8_6_2_compra_repetida_pregunta_y_no_duplica() -> None:
+    """Rompe-si (c): 1 compra repetida por duda = 1 fila + pregunta, no 2 filas."""
+    redis_falso = _FakeRedis()
+    datos = _entrada_registro(1500, "Alimentación", "sándwich")
+    stack, m = _contexto_8_6_2(redis_falso, datos)
+
+    with stack:
+        from workers.tasks import procesar_mensaje_texto_task
+
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+
+        assert m["sheet"].call_count == 1
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] == TEXTO_CONFIRMACION_DUPLICADO
+
+
+def test_8_6_2_tres_compras_distintas_generan_tres_filas() -> None:
+    """Rompe-si (b): 3 compras reales separadas = 3 filas (el dedupe no las junta)."""
+    redis_falso = _FakeRedis()
+    compras = [
+        ("gasté 1500 en pan", _entrada_registro(1500, "Alimentación", "pan")),
+        ("gasté 2500 en bus", _entrada_registro(2500, "Transporte", "bus")),
+        ("gasté 900 en café", _entrada_registro(900, "Alimentación", "cafe")),
+    ]
+    stack = ExitStack()
+    m_redis = stack.enter_context(
+        patch("workers.tasks._dedupe_redis", new=AsyncMock(return_value=redis_falso))
+    )
+    m_wa = stack.enter_context(patch("workers.tasks.enviar_mensaje_whatsapp"))
+    m_sheet = stack.enter_context(patch("workers.tasks.append_transaction_to_sheet"))
+    stack.enter_context(
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+        )
+    )
+    m_parse = stack.enter_context(
+        patch("workers.tasks.parse_financial_text", side_effect=[c[1] for c in compras])
+    )
+
+    with stack:
+        from workers.tasks import procesar_mensaje_texto_task
+
+        for texto, _ in compras:
+            procesar_mensaje_texto_task("50688888888", texto)
+
+        assert m_parse.call_count == 3
+        assert m_sheet.call_count == 3
+        assert m_redis is not None and m_wa is not None
+
+
+def test_8_6_2_reenvio_mismo_media_id_no_guarda() -> None:
+    """Reenvío del mismo audio (mismo media_id) = 1 fila + pregunta."""
+    redis_falso = _FakeRedis()
+    datos = _entrada_registro(1500, "Alimentación", "sándwich")
+    stack, m = _contexto_8_6_2(redis_falso, datos, transcripcion="gasté 1500 en un sándwich")
+
+    with stack:
+        from workers.tasks import download_audio_task
+
+        download_audio_task("99999", "50688888888")
+        download_audio_task("99999", "50688888888")
+
+        assert m["sheet"].call_count == 1
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] == TEXTO_CONFIRMACION_DUPLICADO
+
+
+def test_8_6_2_confirmar_registra_de_nuevo() -> None:
+    """Principio 'preguntar, no adivinar': pregunta, y si confirma, ahora sí guarda."""
+    redis_falso = _FakeRedis()
+    datos = _entrada_registro(1500, "Alimentación", "sándwich")
+    stack, m = _contexto_8_6_2(redis_falso, datos)
+
+    with stack:
+        from workers.tasks import procesar_mensaje_texto_task
+
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        assert m["sheet"].call_count == 1
+
+        procesar_mensaje_texto_task("50688888888", "si registralo otra vez")
+
+        assert m["sheet"].call_count == 2
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] == TEXTO_DUPLICADO_CONFIRMADO
+
+
+def test_8_6_2_confirmar_que_es_el_mismo_no_guarda() -> None:
+    """Si responde 'es el mismo', no se duplica (la pendiente se descarta)."""
+    redis_falso = _FakeRedis()
+    datos = _entrada_registro(1500, "Alimentación", "sándwich")
+    stack, m = _contexto_8_6_2(redis_falso, datos)
+
+    with stack:
+        from workers.tasks import procesar_mensaje_texto_task
+
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        assert m["sheet"].call_count == 1
+
+        procesar_mensaje_texto_task("50688888888", "es el mismo")
+
+        assert m["sheet"].call_count == 1
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] == TEXTO_DUPLICADO_DESCARTADO
