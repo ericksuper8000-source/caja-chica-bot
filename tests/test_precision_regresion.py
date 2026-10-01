@@ -220,8 +220,11 @@ def test_regla_j_presupuesto_no_guarda_fila():
     Trampa J, conducta (DUENO-16 B, 29/09/2026): "Presupuesto transporte 50000"
     creaba una fila falsa de -50000 Transporte. Con accion='no_transaccion' el
     pipeline responde ayuda y NO guarda ni corrige nada (0 filas).
+    El test es hermético: no depende del `.env` ambiente (inexistente en CI), así que
+    `settings` se mockea con token de prueba.
     """
     with (
+        patch("workers.tasks.settings"),
         patch(
             "workers.tasks.transcribir_audio_whisper",
             return_value="Presupuesto transporte 50000",
@@ -257,8 +260,11 @@ def test_regla_j_consulta_no_guarda_fila():
     """
     Trampa J, conducta (DUENO-16 A, 29/09/2026): "Cuánto gasté en este mes?"
     es una consulta, no dinero que entró o salió. 0 filas, respuesta de ayuda.
+    El test es hermético: no depende del `.env` ambiente (inexistente en CI), así que
+    `settings` se mockea con token de prueba.
     """
     with (
+        patch("workers.tasks.settings"),
         patch(
             "workers.tasks.transcribir_audio_whisper",
             return_value="Cuánto gasté en este mes?",
@@ -295,8 +301,11 @@ def test_regla_j_gasto_con_palabra_presupuesto_si_guarda():
     Trampa J, control anti-ROMPE SI (fix 8.6.3): un gasto REAL que menciona la
     palabra 'presupuesto' ("gasté 2000 en carpeta presupuesto") SÍ se guarda.
     El fix clasifica por intención, no por palabra suelta.
+    El test es hermético: no depende del `.env` ambiente (inexistente en CI), así que
+    `settings` se mockea con token de prueba.
     """
     with (
+        patch("workers.tasks.settings"),
         patch(
             "workers.tasks.transcribir_audio_whisper",
             return_value="gasté 2000 en carpeta presupuesto",
