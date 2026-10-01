@@ -151,6 +151,21 @@ async def _procesar_pipeline(
 
     accion = transaction_data.get("accion", "registrar")
 
+    if accion == "no_transaccion":
+        # 8.6.3 — Presupuesto, tope, límite o consulta: no es dinero que entró o
+        # salió, así que no se guarda nada (0 filas). Retorno temprano: sin Sheets
+        # ni llamadas extra a OpenAI.
+        logger.info("no_transaccion: 0 filas (presupuesto/consulta, sin guardar).")
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone,
+            mensaje=(
+                "Eso todavía no lo llevo: presupuestos, topes y consultas no se "
+                "guardan como gastos. Mandame el gasto real con monto y categoría "
+                "y lo apunto."
+            ),
+        )
+        return file_path or ""
+
     if accion == "aclaracion":
         await enviar_mensaje_whatsapp(
             to_phone=sender_phone,
