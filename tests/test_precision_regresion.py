@@ -17,8 +17,11 @@ Reglas cubiertas (ver session-log 12/08/2026 y stage-055.md):
      -> hallazgo 13/08/2026.
 - I  Monto 0 NO es un monto válido: sin precio, monto va en null (no 0) -> hallazgo
      20/08/2026 ("3 cajas de pañuelos" se guardaba con monto 0).
+- J  Presupuesto/tope/límite/consulta NO es una transacción (accion='no_transaccion',
+     0 filas) y un gasto real que mencione la palabra 'presupuesto' SÍ se guarda
+     -> DUENO-16 (29/09/2026, fix 8.6.3).
 
-Las reglas A-D, F-H e I se protegen con tests de CONTRATO de prompt: verifican que el system
+Las reglas A-D, F-J e I se protegen con tests de CONTRATO de prompt: verifican que el system
 prompt (SYSTEM_PROMPT_PARSE) contenga la regla. Si la promesa cambia, el prompt debe
 cambiarse CON su trampa al mismo tiempo. La regla E es un test de documentación del
 comportamiento esperado con transcripción correcta.
@@ -178,3 +181,158 @@ def test_regla_i_monto_cero_no_es_monto_valido():
     assert "no es un monto válido" in _PROMPT
     assert "nunca lo inventes como 0" in _PROMPT
     assert "nunca registres una transacción" in _PROMPT
+
+
+# ------------------------------------------------------------------
+# REGLA J — Presupuesto/consulta NO es transacción (DUENO-16, fix 8.6.3)
+# ------------------------------------------------------------------
+_MENSAJE_NO_TRANSACCION = (
+    "Eso todavía no lo llevo: presupuestos, topes y consultas no se "
+    "guardan como gastos. Mandame el gasto real con monto y categoría "
+    "y lo apunto."
+)
+
+
+def test_regla_j_contrato_no_transaccion_en_prompt():
+    """
+    Trampa J, contrato (DUENO-16, 29/09/2026): el prompt debe definir la intención
+    'no_transaccion' para presupuestos, topes, límites y consultas, evaluada ANTES
+    que las reglas de monto (el número de un presupuesto es una idea a futuro, no
+    una transacción), y prohibir clasificar por palabra suelta (un gasto real que
+    mencione 'presupuesto' sigue siendo 'registrar').
+    """
+    assert "no_transaccion" in _PROMPT
+    assert "una idea a futuro, no es una transacción" in _PROMPT
+    assert "esta regla se evalúa antes" in _PROMPT
+    assert "no clasifiques por palabra suelta" in _PROMPT
+    assert "gasté 2000 en carpeta presupuesto" in _PROMPT
+
+
+def _consentimiento_aceptado():
+    """Consentimiento aceptado con la versión vigente (igual que test_tasks.py)."""
+    from services.politica_service import POLITICA_VERSION
+
+    return {"estado": "aceptado", "version_politica": POLITICA_VERSION}
+
+
+def test_regla_j_presupuesto_no_guarda_fila():
+    """
+    Trampa J, conducta (DUENO-16 B, 29/09/2026): "Presupuesto transporte 50000"
+    creaba una fila falsa de -50000 Transporte. Con accion='no_transaccion' el
+    pipeline responde ayuda y NO guarda ni corrige nada (0 filas).
+    El test es hermético: no depende del `.env` ambiente (inexistente en CI), así que
+    `settings` se mockea con token de prueba.
+    """
+    with (
+        patch("workers.tasks.settings"),
+        patch(
+            "workers.tasks.transcribir_audio_whisper",
+            return_value="Presupuesto transporte 50000",
+        ),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value=_consentimiento_aceptado(),
+        ),
+        patch(
+            "workers.tasks.parse_financial_text",
+            return_value={"accion": "no_transaccion", "monto": None, "categoria": None},
+        ),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+        patch("workers.tasks.update_last_transaction_to_sheet") as mock_update,
+        patch("workers.tasks.httpx.Client"),
+        patch("workers.tasks.os.makedirs"),
+        patch("workers.tasks.open", create=True),
+    ):
+        from workers.tasks import download_audio_task
+
+        download_audio_task("12345", "50688888888")
+
+        mock_sheet.assert_not_called()
+        mock_update.assert_not_called()
+        mock_whatsapp.assert_called_with(
+            to_phone="50688888888",
+            mensaje=_MENSAJE_NO_TRANSACCION,
+        )
+
+
+def test_regla_j_consulta_no_guarda_fila():
+    """
+    Trampa J, conducta (DUENO-16 A, 29/09/2026): "Cuánto gasté en este mes?"
+    es una consulta, no dinero que entró o salió. 0 filas, respuesta de ayuda.
+    El test es hermético: no depende del `.env` ambiente (inexistente en CI), así que
+    `settings` se mockea con token de prueba.
+    """
+    with (
+        patch("workers.tasks.settings"),
+        patch(
+            "workers.tasks.transcribir_audio_whisper",
+            return_value="Cuánto gasté en este mes?",
+        ),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value=_consentimiento_aceptado(),
+        ),
+        patch(
+            "workers.tasks.parse_financial_text",
+            return_value={"accion": "no_transaccion", "monto": None, "categoria": None},
+        ),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+        patch("workers.tasks.update_last_transaction_to_sheet") as mock_update,
+        patch("workers.tasks.httpx.Client"),
+        patch("workers.tasks.os.makedirs"),
+        patch("workers.tasks.open", create=True),
+    ):
+        from workers.tasks import download_audio_task
+
+        download_audio_task("12345", "50688888888")
+
+        mock_sheet.assert_not_called()
+        mock_update.assert_not_called()
+        mock_whatsapp.assert_called_with(
+            to_phone="50688888888",
+            mensaje=_MENSAJE_NO_TRANSACCION,
+        )
+
+
+def test_regla_j_gasto_con_palabra_presupuesto_si_guarda():
+    """
+    Trampa J, control anti-ROMPE SI (fix 8.6.3): un gasto REAL que menciona la
+    palabra 'presupuesto' ("gasté 2000 en carpeta presupuesto") SÍ se guarda.
+    El fix clasifica por intención, no por palabra suelta.
+    El test es hermético: no depende del `.env` ambiente (inexistente en CI), así que
+    `settings` se mockea con token de prueba.
+    """
+    with (
+        patch("workers.tasks.settings"),
+        patch(
+            "workers.tasks.transcribir_audio_whisper",
+            return_value="gasté 2000 en carpeta presupuesto",
+        ),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value=_consentimiento_aceptado(),
+        ),
+        patch(
+            "workers.tasks.parse_financial_text",
+            return_value={
+                "accion": "registrar",
+                "monto": 2000,
+                "categoria": "Compras",
+                "tipo_movimiento": "Gasto",
+                "detalle": "carpeta presupuesto",
+            },
+        ),
+        patch("workers.tasks.enviar_mensaje_whatsapp"),
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+        patch("workers.tasks.update_last_transaction_to_sheet"),
+        patch("workers.tasks.httpx.Client"),
+        patch("workers.tasks.os.makedirs"),
+        patch("workers.tasks.open", create=True),
+    ):
+        from workers.tasks import download_audio_task
+
+        download_audio_task("12345", "50688888888")
+
+        mock_sheet.assert_called_once()

@@ -19,17 +19,19 @@ openai_client = AsyncOpenAI(api_key=_api_key)
 # 1. ESQUEMAS DE ENTORNO Y MODELOS ESTRUCTURADOS
 # ==========================================
 class TransactionResponse(BaseModel):
-    accion: Literal["registrar", "corregir", "aclaracion"] = Field(
+    accion: Literal["registrar", "corregir", "aclaracion", "no_transaccion"] = Field(
         default="registrar",
         description=(
             "Intención del mensaje: 'registrar' (transacción normal), 'corregir' "
-            "(corrección de una transacción previa) o 'aclaracion' (mensaje ambiguo "
-            "con dos flujos; en ese caso los demás campos van en null)."
+            "(corrección de una transacción previa), 'aclaracion' (mensaje ambiguo "
+            "con dos flujos; en ese caso los demás campos van en null) o "
+            "'no_transaccion' (presupuesto, tope, límite o consulta: no es dinero "
+            "que entró o salió; en ese caso los demás campos van en null)."
         ),
     )
     monto: int | None = Field(
         default=None,
-        description="Monto numérico exacto (null si accion='aclaracion').",
+        description=("Monto numérico exacto (null si accion='aclaracion' o 'no_transaccion')."),
     )
     categoria: str | None = Field(
         default=None,
@@ -72,6 +74,15 @@ SYSTEM_PROMPT_PARSE = (
     "campo monto va en null (nunca lo inventes como 0). Nunca registres una transacción "
     "con monto 0.\n"
     "Reglas de intención (campo 'accion'):\n"
+    "- 'no_transaccion': el mensaje NO describe plata que ya entró o salió: es un "
+    "presupuesto, un tope, un límite o una consulta ('presupuesto transporte 50000', "
+    "'cuánto llevo gastado', 'cuánto gasté este mes'). Retorna accion='no_transaccion' "
+    "y deja los demás campos en null, AUNQUE la frase traiga un número: ese número es "
+    "una idea a futuro, no es una transacción. Esta regla se evalúa ANTES que las de "
+    "monto: primero se decide si hubo movimiento real de dinero; solo si lo hubo se "
+    "clasifica como 'registrar', 'corregir' o 'aclaracion'. No clasifiques por palabra "
+    "suelta: si la frase describe plata que ya se gastó o se recibió aunque mencione la "
+    "palabra 'presupuesto' (ej: 'gasté 2000 en carpeta presupuesto'), es 'registrar'.\n"
     "- 'registrar': el mensaje describe UNA transacción financiera normal (un solo gasto "
     "o ingreso). Llena los campos monto, categoria, tipo_movimiento y detalle.\n"
     "- 'corregir': el mensaje corrige una transacción previa (palabras como 'corrige', "
