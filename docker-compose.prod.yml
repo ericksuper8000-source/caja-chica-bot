@@ -10,7 +10,6 @@ services:
       - PYTHONPATH=/code
       - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp_key.json
     volumes:
-      - app_code:/code
       - ${GCP_KEY_PATH:-./secrets/gcp_key.json}:/secrets/gcp_key.json:ro
       - backups_data:/backups
     depends_on:
@@ -37,7 +36,6 @@ services:
       - PYTHONPATH=/code
       - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp_key.json
     volumes:
-      - app_code:/code
       - ${GCP_KEY_PATH:-./secrets/gcp_key.json}:/secrets/gcp_key.json:ro
       - backups_data:/backups
     depends_on:
@@ -58,7 +56,6 @@ services:
       - PYTHONPATH=/code
       - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp_key.json
     volumes:
-      - app_code:/code
       - ${GCP_KEY_PATH:-./secrets/gcp_key.json}:/secrets/gcp_key.json:ro
     depends_on:
       redis:
@@ -93,7 +90,6 @@ services:
       - internal
 
 volumes:
-  app_code:
   backups_data:
   caddy_data:
   caddy_config:
