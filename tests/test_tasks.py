@@ -4,6 +4,8 @@ import tempfile
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from services.duplicado_service import (
     TEXTO_CONFIRMACION_DUPLICADO,
     TEXTO_DUPLICADO_CONFIRMADO,
@@ -505,3 +507,139 @@ def test_8_6_2_confirmar_que_es_el_mismo_no_guarda() -> None:
 
         assert m["sheet"].call_count == 1
         assert m["wa"].call_args_list[-1].kwargs["mensaje"] == TEXTO_DUPLICADO_DESCARTADO
+
+
+# ==========================================
+# 8.6.2 — Variantes naturales de la respuesta (fix 01/10/2026)
+# ==========================================
+
+
+@pytest.mark.parametrize(
+    "respuesta",
+    ["sí", "si", "va", "dale", "ok", "claro", "sí.", "Va!!", "de nuevo", "son dos", "es otro"],
+)
+def test_8_6_2_confirmaciones_cortas_registran_otra_fila(respuesta: str) -> None:
+    """
+    Hallazgo 1 del E2E 01/10/2026: la pregunta pide "sí" y el bot volvía a pedir el monto.
+    Con la pendiente activa, un "sí" pelado solo puede significar "sí, otra vez".
+    """
+    redis_falso = _FakeRedis()
+    datos = _entrada_registro(1500, "Alimentación", "sándwich")
+    stack, m = _contexto_8_6_2(redis_falso, datos)
+
+    with stack:
+        from workers.tasks import procesar_mensaje_texto_task
+
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        assert m["sheet"].call_count == 1
+
+        procesar_mensaje_texto_task("50688888888", respuesta)
+
+        assert m["sheet"].call_count == 2
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] == TEXTO_DUPLICADO_CONFIRMADO
+
+
+@pytest.mark.parametrize(
+    "respuesta",
+    [
+        "no",
+        "nada",
+        "es lo mismo",
+        "era lo mismo",
+        "fue lo mismo",
+        "es la misma",
+        "dejalo",
+        "déjalo",
+        "no lo registres",
+        "no lo guardes",
+        "era uno solo",
+        "solo era uno",
+        "¿es lo mismo?",
+    ],
+)
+def test_8_6_2_variaciones_de_mismo_no_guardan(respuesta: str) -> None:
+    """
+    El caso reportado por el dueño: escribió "es lo mismo" y el bot respondió "Vi dos
+    movimientos en tu mensaje". La lista vieja solo conocía "es el mismo".
+    """
+    redis_falso = _FakeRedis()
+    datos = _entrada_registro(1500, "Alimentación", "sándwich")
+    stack, m = _contexto_8_6_2(redis_falso, datos)
+
+    with stack:
+        from workers.tasks import procesar_mensaje_texto_task
+
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        assert m["sheet"].call_count == 1
+
+        procesar_mensaje_texto_task("50688888888", respuesta)
+
+        assert m["sheet"].call_count == 1
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] == TEXTO_DUPLICADO_DESCARTADO
+
+
+@pytest.mark.parametrize("texto", ["sin monto", "van", "token", "vaca", "mismamente", "notas"])
+def test_8_6_2_marcas_cortas_no_colisionan(texto: str) -> None:
+    """
+    Rompe-si crítico: las marcas cortas se comparan por coincidencia exacta justamente
+    para que `si` no matchee `sin monto` y `va` no matchee `van`. Con una pendiente activa
+    ese falso positivo registra o descarta una fila.
+    """
+    from services.duplicado_service import detectar_confirmacion_duplicado
+
+    assert detectar_confirmacion_duplicado(texto) is None
+
+
+def test_8_6_2_frase_larga_no_confirma() -> None:
+    """
+    Rompe-si histórico (>6 palabras): una frase de negocio no es respuesta a la pregunta
+    del duplicado, así que no puede decidir sobre la fila pendiente: se devuelve al
+    parser. Es el comportamiento previo a este fix, no una regresión.
+
+    No se afirma el número de filas porque el mock del parser devuelve siempre una
+    transacción válida; lo que importa es que la pendiente NO se resolvió como
+    confirmación y el mensaje llegó al parser.
+    """
+    redis_falso = _FakeRedis()
+    datos = _entrada_registro(1500, "Alimentación", "sándwich")
+    stack, m = _contexto_8_6_2(redis_falso, datos)
+
+    with stack:
+        from workers.tasks import procesar_mensaje_texto_task
+
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        assert m["sheet"].call_count == 1
+
+        procesar_mensaje_texto_task("50688888888", "es lo mismo pero dejame la fila")
+
+        # El parser corre una vez por mensaje: la detección de duplicado se evalúa
+        # después de parsear (tasks.py), así que son 3 llamadas para 3 mensajes.
+        assert m["parse"].call_count == 3
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] not in (
+            TEXTO_DUPLICADO_DESCARTADO,
+            TEXTO_DUPLICADO_CONFIRMADO,
+        )
+
+
+def test_8_6_2_sin_pendiente_no_intercepta() -> None:
+    """
+    Rompe-si del aislamiento: sin pendiente activa esta función ni se llega a llamar
+    desde el pipeline. 'sí' debe seguir yendo al parser como mensaje normal.
+    """
+    redis_falso = _FakeRedis()
+    stack, m = _contexto_8_6_2(redis_falso, None)
+
+    with stack:
+        from workers.tasks import procesar_mensaje_texto_task
+
+        procesar_mensaje_texto_task("50688888888", "sí")
+
+        assert m["parse"].call_count == 1
+        assert m["sheet"].call_count == 0
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] == (
+            "No encontré datos financieros en tu mensaje. Intentá de nuevo "
+            "indicando monto, categoría y si es gasto o ingreso."
+        )
