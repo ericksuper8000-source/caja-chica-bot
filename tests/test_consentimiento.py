@@ -7,6 +7,7 @@ import pytest
 from app.core.utils import extraer_datos_texto
 from services.politica_service import (
     POLITICA_VERSION,
+    TEXTO_ACEPTACION_CONFIRMADA,
     TEXTO_BAJA_CONFIRMADA,
     TEXTO_EXPORTACION_VACIA,
     TEXTO_POLITICA_PRIVACIDAD,
@@ -44,6 +45,52 @@ def test_detectar_no_consentimiento() -> None:
     assert detectar_respuesta_consentimiento("gasté 5000 en el almuerzo") is None
     assert detectar_respuesta_consentimiento("") is None
     assert detectar_respuesta_consentimiento("hola") is None
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "no quiero aceptar",
+        "no me gustaría aceptar",
+        "no deseo aceptar",
+        "nada de aceptar",
+        "no autorizo",
+        "no consiento",
+    ],
+)
+def test_negacion_nunca_registra_consentimiento(texto: str) -> None:
+    """
+    Rompe-si del fix 01/10/2026: el gate no puede devolver `aceptar` cuando el mensaje
+    dice que NO. Antes estas frases devolvían `aceptar` porque `aceptar` aparecía dentro
+    del texto aunque estuviera negado, y el bot registraba consentimiento válido sobre
+    datos que el usuario no autorizó (Ley 8968).
+
+    `None` significa que el bot reenvía la política y el usuario contesta de nuevo.
+    """
+    assert detectar_respuesta_consentimiento(texto) in ("rechazar", None)
+    assert detectar_respuesta_consentimiento(texto) != "aceptar"
+
+
+@pytest.mark.parametrize(
+    "texto",
+    ["acepto no", "no, acepto", "nunca acepto", "jamás acepto", "tampoco acepto"],
+)
+def test_aceptacion_ambigua_no_se_decide(texto: str) -> None:
+    """
+    Negación y aceptación en el mismo mensaje. No hay forma segura de adivinar qué
+    quiso decir, así que no se decide y se repregunta. Antes estas frases devolvían
+    `aceptar`, incluida `'acepto no'` (orden invertido de `'no acepto'`).
+    """
+    assert detectar_respuesta_consentimiento(texto) in ("rechazar", None)
+
+
+@pytest.mark.parametrize(
+    "texto",
+    ["acepto", "ACEPTO", "ACEPTO!", "Acepto,", "si acepto", "de acuerdo", "estoy de acuerdo"],
+)
+def test_aceptacion_limpias_sigue_aceptando(texto: str) -> None:
+    """El fix no puede cerrar la puerta de las aceptaciones válidas: 8A depende de ellas."""
+    assert detectar_respuesta_consentimiento(texto) == "aceptar"
 
 
 def test_politica_privacidad_cubre_elementos_ley_8968() -> None:
@@ -352,6 +399,52 @@ async def test_pipeline_sin_consentimiento_audio_no_parsea() -> None:
 def test_async_loop_unicoy() -> None:
     """El pipeline es invocado por un único asyncio.run() en cada tarea (ADR-0005)."""
     assert asyncio.iscoroutinefunction(_procesar_pipeline) is True
+
+
+@pytest.mark.anyio
+async def test_pipeline_negacion_no_registra_consentimiento() -> None:
+    """
+    Prueba de extremo a extremo del fix 01/10/2026: si el usuario escribe 'no quiero
+    aceptar', el pipeline NO debe registrar consentimiento ni procesar la transacción.
+
+    Antes del fix, `registrar_consentimiento` se llamaba con 'aceptado' y la fila se
+    guardaba igual: datos procesados sin autorización (Ley 8968).
+    """
+    with (
+        patch("workers.tasks.obtener_consentimiento", return_value=None),
+        patch("workers.tasks.registrar_consentimiento") as mock_registrar,
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+    ):
+        result = await _procesar_pipeline(None, "50688888888", texto_entrante="no quiero aceptar")
+
+    assert result == ""
+    mock_registrar.assert_not_called()
+    mock_sheet.assert_not_called()
+    mock_parser.assert_not_called()
+    mock_whatsapp.assert_called_once_with(to_phone="50688888888", mensaje=TEXTO_POLITICA_PRIVACIDAD)
+
+
+@pytest.mark.anyio
+async def test_pipeline_aceptacion_limpia_sigue_registrando() -> None:
+    """Contrapeso del test anterior: el camino válido no se rompió."""
+    with (
+        patch("workers.tasks.obtener_consentimiento", return_value=None),
+        patch("workers.tasks.registrar_consentimiento") as mock_registrar,
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+    ):
+        result = await _procesar_pipeline(None, "50688888888", texto_entrante="ACEPTO")
+
+    assert result == ""
+    mock_registrar.assert_called_once_with("50688888888", "aceptado")
+    mock_parser.assert_not_called()
+    mock_sheet.assert_not_called()
+    mock_whatsapp.assert_called_once_with(
+        to_phone="50688888888", mensaje=TEXTO_ACEPTACION_CONFIRMADA
+    )
 
 
 # ==========================================

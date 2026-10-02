@@ -67,33 +67,64 @@ def _normalizar(texto: str) -> str:
     return " ".join(texto.split())
 
 
+_MARCAS_ACEPTACION = (
+    "acepto",
+    "aceptar",
+    "aceptamos",
+    "estoy de acuerdo",
+    "de acuerdo",
+    "si acepto",
+)
+"""Marcas de aceptación explícita. Se evalúan sobre el texto ya normalizado."""
+
+_NEGACION_AMBIGUA = re.compile(r"\b(no|nunca|jamas|tampoco|nada)\b")
+"""
+Palabra de negación presente en el mensaje. El texto normalizado ya no tiene tildes,
+por eso el patrón busca `jamas` y no `jamás`.
+
+**Por qué existe (fix 01/10/2026).** El gate buscaba `aceptar` por *substring*, así que
+en `'no quiero aceptar'` no encontraba la fórmula de rechazo (`no acepto`) pero sí
+encontraba `aceptar` dentro del texto → devolvía `aceptar`. El usuario decía que NO y el
+bot registraba consentimiento válido: datos procesados sin permiso, que es justo lo que
+la Ley 8968 prohíbe.
+"""
+
+
 def detectar_respuesta_consentimiento(texto: str) -> Literal["aceptar", "rechazar"] | None:
     """
     Detecta si un mensaje de texto constituye la aceptación o el rechazo explícito
-    de la política de privacidad (Fase 6.5.1, ADR-0011). Retorna 'aceptar',
-    'rechazar' o None si el mensaje no es una respuesta de consentimiento.
+    de la política de privacidad (Fase 6.5.1, ADR-0011). Retorna 'aceptar', 'rechazar'
+    o None si el mensaje no es una respuesta de consentimiento.
+
+    **Criterio de seguridad: ante la duda, `None` — nunca `aceptar`.** Los dos sentidos de
+    equivocarse no son equivalentes:
+
+    - `aceptar` de más = registrar consentimiento que el usuario NO dio y procesar sus
+      datos. Es riesgo legal bajo la Ley 8968.
+    - `None` de más = el bot reenvía la política y el usuario contesta otra vez. Cuesta
+      un mensaje.
+
+    Cuando hay negación y aceptación a la vez (`'no quiero aceptar'`, `'acepto no'`),
+    la decisión no se toma: se devuelve `None` y se repregunta.
     """
     normalizado = _normalizar(texto)
     if not normalizado:
         return None
 
+    # 1. Rechazo explícito: manda sobre todo lo demás.
     if _contiene_negacion(normalizado):
         return "rechazar"
 
-    if any(
-        marca in normalizado
-        for marca in (
-            "acepto",
-            "aceptar",
-            "aceptamos",
-            "estoy de acuerdo",
-            "de acuerdo",
-            "si acepto",
-        )
-    ):
-        return "aceptar"
+    tiene_aceptacion = any(marca in normalizado for marca in _MARCAS_ACEPTACION)
+    if not tiene_aceptacion:
+        return None
 
-    return None
+    # 2. Negación + aceptación en el mismo mensaje = ambiguo. No se decide.
+    if _NEGACION_AMBIGUA.search(normalizado):
+        return None
+
+    # 3. Aceptación limpia.
+    return "aceptar"
 
 
 def _contiene_negacion(texto_normalizado: str) -> bool:
