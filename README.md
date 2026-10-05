@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 14/09/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 05/10/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -25,7 +25,7 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
 - **Archivos Temporales Seguros** — Uso de `tempfile.gettempdir()` en lugar de `/tmp` hardcodeado; `os.remove()` protegido con `try/except OSError`.
 - **Validación de Argumentos** — `extraer_datos_audio()` lanza `ValueError` si `media_id` o `from_phone` son `None`.
 - **Tipado** — Mypy (config `pyproject.toml`, sin `--strict`, igual que la CI) en verde
-  sobre 15 archivos fuente. Schemas con Pydantic v2.
+  sobre 18 archivos fuente. Schemas con Pydantic v2.
 
 ### Corrección de Autenticación Meta (03/08/2026)
 - **Bearer Token en descarga de audio (3.8.1)** — `workers/tasks.py` envía `Authorization: Bearer` en las dos llamadas a Meta (info del media y descarga del archivo). Antes la descarga fallaba con `401 Unauthorized`. Test en `tests/test_tasks.py` verifica que ambas llamadas incluyen el header.
@@ -136,7 +136,7 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
   Listos para subir al repo.
 
 ### Ajustes iterativos de precisión (Fase 5.5.4, 12/08/2026)
-- **Trampas de regresión A–G (+H) (`tests/test_precision_regresion.py`)** — blindan las reglas de
+- **Trampas de regresión A–J (+REGLA I) (`tests/test_precision_regresion.py`)** — blindan las reglas de
   negocio decididas con el dueño:
   - **A** corrección = DELTA (campo no mencionado → `null` → el sistema conserva el valor de la
     fila anterior; enmendada el 13/08/2026 tras hallazgo real) · **H** una corrección solo de
@@ -146,7 +146,9 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
     por prestar un servicio = Servicios · **E** limitación aceptada de Whisper ("seis tejas" →
     "seis cejas"; con transcripción correcta la lógica acierta) · **F** un modismo con número ES
     un monto y anula el `aclaracion` por falta de monto ("dos tucanes" ≠ dos flujos) · **G**
-    "Otros" solo como último recurso (Servicios/Ventas se prefieren).
+    "Otros" solo como último recurso (Servicios/Ventas se prefieren) · **I** monto 0 no es
+    válido (fix 20/08/2026) · **J** presupuesto/consulta NO es transacción: 0 filas + ayuda
+    (fix 8.6.3, 01/10/2026).
 - **`SYSTEM_PROMPT_PARSE` expuesto** — el system prompt ahora vive en
   `services/openai_service.py:54` como constante, para que las trampas verifiquen el contrato
   del prompt (TDD de prompt: si la regla se debilita, la trampa se enciende en rojo).
@@ -210,7 +212,24 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
   `caja-chica-backup-AAAAMMDD-HHMMSS.zip`). Retención 90 días purgando por la fecha del
   nombre. Programada por Celery beat (23:00 UTC configurable) vía `crear_backup_task`; los
   .zip caen en `/backups` (volumen `backups_data`, sobrevive a recreaciones). Destino
-  intercambiable: hoy local, a un bucket cuando el proyecto crezca.
+   intercambiable: hoy local, a un bucket cuando el proyecto crezca.
+
+### Fixes pre-8A y pilotaje (01–05/10/2026)
+- **8.6.3 anti-transacción inventada (DUENO-16, P1)** — intención `no_transaccion` en
+  `SYSTEM_PROMPT_PARSE` + rama early-return en `workers/tasks.py` (responde ayuda, 0 filas)
+  + **trampa J** en `tests/test_precision_regresion.py` (DUENO-16 A/B → 0 filas; control
+  bueno SÍ guarda). E2E real 3/3 en verde el 01/10/2026.
+- **8.6.2 idempotencia anti-doble-tap** — `services/duplicado_service.py` (nuevo): mismo
+  `media_id` (reenvío) o misma huella `(monto, categoría, detalle)` <2 min → pregunta
+  "¿es otro o el mismo?" y solo guarda si confirma. Redis `dup:last`/`dup:pendiente`
+  (TTL 10 min), 0 schema nuevo, 0 llamadas extra a Sheets. E2E validado 01/10/2026.
+- **Fixes de conversación (02/10/2026, `main` @ `fbff8e8`)** — (a) gate de consentimiento:
+  `"no quiero aceptar"` (y variantes) devolvía `aceptar` por substring → criterio "ante la
+  duda `None`, nunca `aceptar`"; (b) confirmación de duplicados en 2 capas (≤2 palabras
+  exacta, 3–6 substring, >6 nunca) para `"sí"`/`"es lo mismo"`. **E2E 05/10/2026: fix de
+  consentimiento validado** (baja→`Hola`→`no quiero aceptar`→política sin consentimiento→
+  `ACEPTO`→gasto OK) → **NO-GO levantado, 8A lanzado (escalonado)**.
+- **QA actual: pytest 156/156** en Docker (ruff/black/mypy verdes, gitleaks `no leaks found`).
 
 ---
 
@@ -273,7 +292,7 @@ Celery Worker (workers/tasks.py)
 
 ## Estado del Proyecto
 
-- **95 tests, 95 passed** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde · `mypy --strict` en verde (05/08/2026, re-verificado 13/08/2026)
+- **156 tests, 156 passed (02/10/2026, QA canónico en Docker)** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde · `mypy --strict` en verde (18 archivos) · gitleaks `no leaks found`
 - CI/CD: GitHub Actions + GitLab CI (pipelines idénticos)
 - **03/08/2026:** Descarga de audio de Meta corregida (Bearer Token) y validada con `200 OK` contra servidores reales.
 - **05/08/2026:** App Secret real aplicado, firma HMAC-SHA256 validada matemáticamente, suscripción WABA→App exitosa y **pipeline de IA demostrado de punta a punta sin Meta** (webhook simulado → Whisper → GPT-4o-mini → Google Sheets).
@@ -327,6 +346,16 @@ Celery Worker (workers/tasks.py)
   `LARGO=32`). **E2E Hetzner 24/7 validado** (audio → transcription → Sheets → WhatsApp, sin ngrok).
 - **10/09/2026:** **Tester1 (Jacqueline) validado E2E en Hetzner.** Consentimiento aceptado + transacción
   registrada en pestaña propia. Allowlist 2/5 (dueño + tester1), 3 cupos libres.
+- **21–22/09/2026:** **Chip + línea real registrados + token permanente desbloqueado. E2E de la
+  línea nueva VALIDADO (~13.5 s).** Allowlist obsoleta; bot 24/7 en Hetzner.
+- **28–29/09/2026:** **Dueño como usuario 0: 19/19 pruebas (18 BIEN, 1 MAL — DUENO-16).**
+  "Presupuesto transporte 50000" creó fila falsa → decisión NO-GO → fix **8.6.3** (P1).
+- **01/10/2026:** **Fix 8.6.3 + 8.6.2 implementados, desplegados y validados E2E.**
+  Hallazgo: volumen `app_code` stale (producción corría código 07/09) → eliminado; quitar el
+  mount del compose antes del próximo deploy.
+- **02/10/2026:** **2 fixes de conversación en producción (`main` @ `fbff8e8`), suite 156/156.**
+- **05/10/2026:** **E2E de consentimiento VALIDADO → NO-GO LEVANTADO → 8A LANZADO
+  (escalonado: Jacqueline 06/10 · Triana ~20/10 · Danny pendiente).**
 
 ### Timeline
 
@@ -344,6 +373,10 @@ Celery Worker (workers/tasks.py)
 | 10 (Ago 20) | **Fase 6.5 — privacidad, consentimiento y aislamiento:** canal de texto + consentimiento Ley 8968 (6.5.1, gate) + fix monto 0 + aislamiento por pestañas (6.5.2, ADR-0009) + exportación y baja (6.5.3, ADR-0011) + política documentada (6.5.4) + re-consentimiento por versión (6.5.6) + **backups del sheet (6.5.5, ADR-0014: CSV por pestaña + manifest, retención 90 días, Celery beat, volumen `backups_data`)** — **pytest 95/95**, todo desplegado y validado E2E real en WhatsApp | ✅ |
 | 11 (Ago 25) | **Inicio de 5.1 — Despliegue producción:** dominio `cajachicacr.com` comprado vía Cloudflare (~$11/año) + cuenta Hetzner creada. Pendiente: crear servidor CX22, configurar DNS, instalar Docker + Caddy | 🔄 (5.1.0 ✅, 5.1 en curso) |
 | 12 (Sep 07) | **5.1 Despliegue Hetzner + Caddy:** servidor CX23 creado, Docker instalado, repos clonado, Caddy con SSL automático, `cajachicacr.com` con HTTPS. **5.1.2** webhook Meta verificado (callback URL actualizado). **08/09** `.env.production` sincronizado + E2E Hetzner 24/7 validado (sin ngrok). **10/09** tester1 (Jacqueline) validado E2E: consentimiento + transacción registrada. | 🔄 (Fase 8 en curso: 1 piloto activo, 2 pendientes — chip prepago CR) |
+| 13 (Sep 21–22) | **Línea real + token permanente:** chip prepago registrado (PIN+OTP), bot apuntado a la línea nueva, token permanente desbloqueado vía usuario del sistema; **E2E de la línea nueva validado (~13.5 s)**. Allowlist obsoleta. | ✅ |
+| 14 (Sep 28–29) | **Usuario 0: 19/19 (18 BIEN, 1 MAL — DUENO-16).** "Presupuesto transporte 50000" creó fila falsa → NO-GO → fix 8.6.3 (P1: `no_transaccion` + trampa J). | ✅ (fix diseñado) |
+| 15 (Oct 01–02) | **8.6.3 + 8.6.2 + 2 fixes de conversación en producción (`main` @ `fbff8e8`).** Hallazgo volumen `app_code` stale resuelto. **Suite 156/156**, gitleaks limpio. | ✅ |
+| 16 (Oct 05) | **E2E de consentimiento validado → NO-GO levantado → 8A lanzado (escalonado: Jacqueline 06/10).** | 🔄 (8A en curso) |
 
 ### Pendientes para MVP Comercial
 
@@ -358,7 +391,7 @@ Celery Worker (workers/tasks.py)
 - **Re-consentimiento por versión (6.5.6):** ✅ **COMPLETADO y desplegado 20/08/2026**.
 - **Backups del sheet (6.5.5):** ✅ **COMPLETADO y desplegado 20/08/2026** — ADR-0014, Celery beat, volumen `backups_data`.
 - **Despliegue Hetzner + Caddy (5.1):** ✅ **DESPLEGADO 07/09/2026** — CX23, HTTPS funcional en `cajachicacr.com`, webhook Meta verificado (07/09), `.env.production` sincronizado (08/09).
-- **Piloto fase 1 (familia):** 🔄 1 piloto activo (Jacqueline, E2E validado 10/09/2026), 2 pendientes (Triana, Danny — esperando chip prepago CR).
+- **Piloto fase 1 (familia):** 🔄 **8A LANZADO 05/10/2026 (escalonado: Jacqueline desde 06/10 · Triana ~20/10 en vivo · Danny pendiente).**
 - **Onboarding Automatizado (6.1):** ⬜ Pendiente (se construye después del pilotaje).
 - **Autenticación Simplificada (6.3):** ⬜ Pendiente.
 
@@ -506,9 +539,9 @@ curl https://cajachicacr.com/health
 |---|---|---|
 | Black | `black . --check` | Formateo consistente |
 | Ruff | `ruff check .` | 0 errores |
-| Mypy | `mypy app/ workers/ services/` (config, sin `--strict`, como la CI) | 0 errores en 15 archivos |
-| Mypy estricto | `mypy --strict` | **Success: no issues found in 15 source files (05/08/2026)** |
-| Pytest | `pytest tests/ -v` | 95/95 passed |
+| Mypy | `mypy app/ workers/ services/` (config, sin `--strict`, como la CI) | 0 errores en 18 archivos |
+| Mypy estricto | `mypy --strict` | **Success: no issues found in 18 source files (02/10/2026)** |
+| Pytest | `pytest tests/ -v` | **156/156 passed (02/10/2026)** |
 
 ```bash
 # QA local (Docker)
