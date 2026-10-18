@@ -1,9 +1,12 @@
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from services.sheets_service import obtener_transacciones_cliente
+
+logger = logging.getLogger(__name__)
 
 MESES_ES = {
     "enero": 1,
@@ -19,6 +22,56 @@ MESES_ES = {
     "octubre": 10,
     "noviembre": 11,
     "diciembre": 12,
+}
+
+# Sinónimos: clave = término del usuario -> valor = categoría real en Sheets
+SINONIMOS_CATEGORIAS = {
+    "comida": "alimentacion",
+    "alimentos": "alimentacion",
+    "restaurante": "alimentacion",
+    "almuerzo": "alimentacion",
+    "cena": "alimentacion",
+    "desayuno": "alimentacion",
+    "snack": "alimentacion",
+    "transporte": "transporte",
+    "bus": "transporte",
+    "taxi": "transporte",
+    "uber": "transporte",
+    "gasolina": "transporte",
+    "combustible": "transporte",
+    "vivienda": "vivienda",
+    "alquiler": "vivienda",
+    "renta": "vivienda",
+    "hipoteca": "vivienda",
+    "servicios": "servicios",
+    "luz": "servicios",
+    "agua": "servicios",
+    "internet": "servicios",
+    "telefono": "servicios",
+    "salud": "salud",
+    "medico": "salud",
+    "medicina": "salud",
+    "farmacia": "salud",
+    "hospital": "salud",
+    "educacion": "educacion",
+    "colegio": "educacion",
+    "universidad": "educacion",
+    "libros": "educacion",
+    "entretenimiento": "entretenimiento",
+    "cine": "entretenimiento",
+    "streaming": "entretenimiento",
+    "netflix": "entretenimiento",
+    "spotify": "entretenimiento",
+    "ropa": "ropa",
+    "calzado": "ropa",
+    "zapatos": "ropa",
+    "tecnologia": "tecnologia",
+    "celular": "tecnologia",
+    "computadora": "tecnologia",
+    "laptop": "tecnologia",
+    "otros": "otros",
+    "varios": "otros",
+    "miscelaneos": "otros",
 }
 
 
@@ -89,6 +142,29 @@ def _coincide_categoria(cat_hoja: str, cat_buscada: str) -> bool:
     return c1 == c2 or c2 in c1 or c1 in c2
 
 
+def _expandir_con_sinonimos(termino: str) -> set[str]:
+    """Expande un término del usuario con sus sinónimos conocidos."""
+    base = _normalizar_categoria(termino)
+    resultados = {base}
+    if base in SINONIMOS_CATEGORIAS:
+        resultados.add(SINONIMOS_CATEGORIAS[base])
+    return resultados
+
+
+def _categoria_match_en_texto(cats_usuario: set[str], texto: str) -> str | None:
+    """Busca si alguna categoría real (o su sinónimo) aparece en el texto."""
+    t = _normalizar_categoria(texto)
+    for cat in cats_usuario:
+        # Directo
+        if cat in t:
+            return cat
+        # Por sinónimos inversos: si algún sinónimo apunta a esta categoría
+        for termino_usuario, cat_real in SINONIMOS_CATEGORIAS.items():
+            if cat_real == cat and termino_usuario in t:
+                return cat
+    return None
+
+
 async def _categorias_reales(sender_phone: str) -> set[str]:
     """Lee las categorías que el usuario YA usa en sus gastos (desde Sheets)."""
     rows = await obtener_transacciones_cliente(sender_phone)
@@ -114,6 +190,7 @@ async def detectar_consulta(
 
     # Categorías reales del usuario
     cats = await _categorias_reales(sender_phone)
+    logger.debug("consulta: usuario %s categorias=%s", sender_phone, sorted(cats))
 
     # 1. Consultas de comparación mes a mes
     if any(
@@ -163,21 +240,15 @@ async def detectar_consulta(
     # 3. Consulta por categoría + período (usa SUS categorías reales)
     for mes_nombre, mes_num in MESES_ES.items():
         if mes_nombre in t:
-            categoria = None
-            for cat in cats:
-                if cat in t:
-                    categoria = cat
-                    break
+            categoria = _categoria_match_en_texto(cats, t)
+            logger.debug("consulta: match categoria=%s para texto=%s", categoria, t)
             if categoria:
                 return ConsultaCategoria(
                     categoria=categoria, periodo="mes_especifico", mes_especifico=mes_num
                 )
 
-    categoria = None
-    for cat in cats:
-        if cat in t:
-            categoria = cat
-            break
+    categoria = _categoria_match_en_texto(cats, t)
+    logger.debug("consulta: match categoria=%s para texto=%s", categoria, t)
 
     if categoria:
         if "semana" in t:
