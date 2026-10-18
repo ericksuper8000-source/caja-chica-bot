@@ -13,6 +13,15 @@ import redis.asyncio as aioredis
 
 from app.config import settings
 from services.backup_service import crear_backup
+from services.consulta_service import (
+    calcular_consulta_categoria,
+    calcular_consulta_comparacion,
+    calcular_consulta_mayor,
+    detectar_consulta,
+    formatear_resultado_categoria,
+    formatear_resultado_comparacion,
+    formatear_resultado_mayor,
+)
 from services.duplicado_service import (
     TEXTO_CONFIRMACION_DUPLICADO,
     TEXTO_DUPLICADO_CONFIRMADO,
@@ -234,6 +243,38 @@ async def _enviar_reporte_caja(sender_phone: str, periodo: Literal["semana", "me
         await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=bloque)
 
 
+async def _enviar_consulta(
+    sender_phone: str,
+    consulta: Any,
+) -> None:
+    """
+    Sprint de Valor Visible (6.6) — Responde consultas deterministas por chat.
+    Siempre responde en texto (no tarjeta). Nunca tira el pipeline.
+    """
+    try:
+        if hasattr(consulta, "categoria"):
+            res_cat = await calcular_consulta_categoria(sender_phone, consulta)
+            mensaje = formatear_resultado_categoria(res_cat)
+        elif hasattr(consulta, "periodo") and getattr(consulta, "periodo", None) in (
+            "semana",
+            "mes",
+            "semana_pasada",
+            "mes_pasada",
+            "todo",
+        ):
+            res_mayor = await calcular_consulta_mayor(sender_phone, consulta)
+            mensaje = formatear_resultado_mayor(res_mayor)
+        else:
+            res_comp = await calcular_consulta_comparacion(sender_phone, consulta)
+            mensaje = formatear_resultado_comparacion(res_comp)
+    except Exception as exc:  # noqa: BLE001 - no perder el dato
+        logger.error("consulta: falló el cálculo (%s).", exc)
+        mensaje = "No pude calcular la consulta. Intentá de nuevo."
+
+    await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=mensaje)
+    logger.info("consulta: respuesta enviada a %s.", sender_phone)
+
+
 async def _procesar_pipeline(
     file_path: str | None, sender_phone: str, texto_entrante: str | None = None
 ) -> str:
@@ -338,7 +379,15 @@ async def _procesar_pipeline(
         await _enviar_reporte_caja(sender_phone, periodo_reporte)
         return file_path or ""
 
-    # 6. 8.6.2 — Confirmación de duplicado (va ANTES del parse: "sí" no trae monto)
+    # 6. Sprint de Valor Visible — Consultas completas (6.6 V1): detección determinista
+    #    de "cuanto gaste en X", "mayor gasto", "comparación". Va después del reporte
+    #    y antes del dedupe/parse: una consulta no es una transacción.
+    consulta = await detectar_consulta(sender_phone, transcripcion)
+    if consulta is not None:
+        await _enviar_consulta(sender_phone, consulta)
+        return file_path or ""
+
+    # 7. 8.6.2 — Confirmación de duplicado (va ANTES del parse: "sí" no trae monto)
     pendiente = await _leer_pendiente(sender_phone)
     if pendiente is not None:
         decision = detectar_confirmacion_duplicado(transcripcion)
