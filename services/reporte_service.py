@@ -524,7 +524,7 @@ def _dibujar_tarjeta(resumen: ResumenCaja, alto: int) -> Image.Image:
         dibujo.text(
             (_MARGEN, y),
             f"Mayor gasto: {formatear_monto(monto_mayor)} · {_recortar(detalle_mayor, 28)}",
-            font=_fuente(False, 40),
+            font=_fuente(False, 32),
             fill=_COLOR_TINTA,
         )
         y += 72
@@ -536,13 +536,13 @@ def _dibujar_tarjeta(resumen: ResumenCaja, alto: int) -> Image.Image:
             color_frase = (
                 _COLOR_COMPARACION_MAS if resumen.comparacion_pct > 0 else _COLOR_COMPARACION_MENOS
             )
-        dibujo.text((_MARGEN, y), frase, font=_fuente(True, 40), fill=color_frase)
+        dibujo.text((_MARGEN, y), frase, font=_fuente(True, 32), fill=color_frase)
         y += 60
 
     dibujo.text(
         (_MARGEN, y + 20),
         f"{resumen.n_movimientos} movimientos registrados",
-        font=_fuente(False, 32),
+        font=_fuente(False, 24),
         fill=_COLOR_GRIS,
     )
     return imagen
