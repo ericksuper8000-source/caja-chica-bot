@@ -53,7 +53,7 @@ from services.suscripcion_service import (
     mensaje_suscripcion_no_activa,
     suscripcion_permite_uso,
 )
-from services.whatsapp_service import enviar_mensaje_whatsapp
+from services.whatsapp_service import dividir_mensaje_largo, enviar_mensaje_whatsapp
 from workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -259,10 +259,8 @@ async def _procesar_pipeline(
             return file_path or ""
 
         movimientos = "\n".join(_formatear_movimiento(fila) for fila in filas)
-        await enviar_mensaje_whatsapp(
-            to_phone=sender_phone,
-            mensaje=f"{TEXTO_EXPORTACION_ENCABEZADO}\n{movimientos}",
-        )
+        for bloque in dividir_mensaje_largo(f"{TEXTO_EXPORTACION_ENCABEZADO}\n{movimientos}"):
+            await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=bloque)
         return file_path or ""
 
     if respuesta_arco == "baja":
