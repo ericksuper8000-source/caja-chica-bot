@@ -2,7 +2,40 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from services.whatsapp_service import enviar_mensaje_whatsapp
+from services.whatsapp_service import dividir_mensaje_largo, enviar_mensaje_whatsapp
+
+
+def test_dividir_mensaje_vacio():
+    """Texto vacío → sin bloques."""
+    assert dividir_mensaje_largo("") == []
+
+
+def test_dividir_mensaje_corto_en_un_bloque():
+    """Texto que cabe en el límite → un solo bloque idéntico."""
+    texto = "Estos son tus movimientos:\nlinea uno\nlinea dos"
+    assert dividir_mensaje_largo(texto) == [texto]
+
+
+def test_dividir_mensaje_largo_por_lineas():
+    """Texto largo → varios bloques, cada uno <= límite, contenido intacto."""
+    lineas = [f"movimiento numero {i:03d} de prueba" for i in range(200)]
+    texto = "\n".join(lineas)
+
+    bloques = dividir_mensaje_largo(texto, limite=100)
+
+    assert len(bloques) > 1
+    assert all(len(bloque) <= 100 for bloque in bloques)
+    assert "\n".join(bloques) == texto
+
+
+def test_dividir_linea_mas_larga_que_limite():
+    """Una línea sola más larga que el límite se parte en seco."""
+    texto = "x" * 250
+
+    bloques = dividir_mensaje_largo(texto, limite=100)
+
+    assert [len(bloque) for bloque in bloques] == [100, 100, 50]
+    assert "".join(bloques) == texto
 
 
 @pytest.mark.anyio

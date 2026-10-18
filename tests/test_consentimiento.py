@@ -481,6 +481,46 @@ async def test_pipeline_exporta_datos() -> None:
 
 
 @pytest.mark.anyio
+async def test_pipeline_exporta_historial_largo_en_bloques() -> None:
+    """Historial que supera el límite de WhatsApp (4096) → se envía en varios mensajes."""
+    filas = [
+        [
+            f"2026-08-20 10:{i // 60:02d}:{i % 60:02d}",
+            -1000 - i,
+            "Alimentación",
+            f"detalle numero {i}",
+        ]
+        for i in range(200)
+    ]
+
+    with (
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": POLITICA_VERSION},
+        ),
+        patch("workers.tasks.obtener_transacciones_cliente", return_value=filas),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+        patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
+    ):
+        result = await _procesar_pipeline(None, "50688888888", texto_entrante="exporta mis datos")
+
+    assert result == ""
+    mock_parser.assert_not_called()
+    mock_sheet.assert_not_called()
+
+    bloques = [llamada.kwargs["mensaje"] for llamada in mock_whatsapp.call_args_list]
+    assert len(bloques) >= 2
+    assert all(len(bloque) <= 4000 for bloque in bloques)
+    assert bloques[0].startswith("Estos son tus movimientos registrados:")
+
+    texto_completo = "\n".join(bloques)
+    assert texto_completo.count("detalle numero ") == 200
+    assert "detalle numero 0" in texto_completo
+    assert "detalle numero 199" in texto_completo
+
+
+@pytest.mark.anyio
 async def test_pipeline_exporta_sin_movimientos() -> None:
     """'exporta mis datos' sin filas → mensaje de vacío, nada registrado."""
     with (
