@@ -218,8 +218,8 @@ def _consentimiento_aceptado():
 def test_regla_j_presupuesto_no_guarda_fila():
     """
     Trampa J, conducta (DUENO-16 B, 29/09/2026): "Presupuesto transporte 50000"
-    creaba una fila falsa de -50000 Transporte. Con accion='no_transaccion' el
-    pipeline responde ayuda y NO guarda ni corrige nada (0 filas).
+    Ahora se procesa como comando de presupuesto (7.6 V1): se guarda el límite
+    y responde confirmación. NO crea fila en Sheets (0 filas).
     El test es hermético: no depende del `.env` ambiente (inexistente en CI), así que
     `settings` se mockea con token de prueba.
     """
@@ -252,7 +252,7 @@ def test_regla_j_presupuesto_no_guarda_fila():
         mock_update.assert_not_called()
         mock_whatsapp.assert_called_with(
             to_phone="50688888888",
-            mensaje=_MENSAJE_NO_TRANSACCION,
+            mensaje="Presupuesto transporte: ₡50,000/mes guardado.",
         )
 
 
