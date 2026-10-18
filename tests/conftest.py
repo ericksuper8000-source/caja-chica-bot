@@ -51,5 +51,26 @@ def redis_aislado():
         yield falso
 
 
+@pytest.fixture(autouse=True)
+def suscripcion_activa_por_defecto():
+    """
+    Todos los tests de pipeline arrancan con una suscripción al día (Fase 7.2.1): antes
+    del gate comercial el flujo no dependía de la pestaña `Suscripciones` y los tests que
+    no son del gate no deben romperse por su ausencia. Los tests del gate pisan este
+    patch con su propio `patch("workers.tasks.obtener_suscripcion", ...)`.
+
+    Se parchea además el origen en `services.sheets_service` por la misma razón que
+    `redis_aislado` parchea `redis.asyncio.from_url`: `test_download_audio_task_exito`
+    reimporta `workers.tasks`, y el módulo reimportado vuelve a leer el nombre real
+    desde `services.sheets_service` si solo se parchea `workers.tasks`.
+    """
+    activa = {"estado": "activo"}
+    with (
+        patch("workers.tasks.obtener_suscripcion", return_value=activa),
+        patch("services.sheets_service.obtener_suscripcion", return_value=activa),
+    ):
+        yield
+
+
 # Configuración de pytest-asyncio para evitar warnings
 pytest_plugins: list[str] = []

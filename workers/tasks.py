@@ -44,9 +44,14 @@ from services.politica_service import (
 from services.sheets_service import (
     append_transaction_to_sheet,
     obtener_consentimiento,
+    obtener_suscripcion,
     obtener_transacciones_cliente,
     registrar_consentimiento,
     update_last_transaction_to_sheet,
+)
+from services.suscripcion_service import (
+    mensaje_suscripcion_no_activa,
+    suscripcion_permite_uso,
 )
 from services.whatsapp_service import enviar_mensaje_whatsapp
 from workers.celery_app import celery_app
@@ -268,7 +273,20 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
-    # 4. 8.6.2 — Confirmación de duplicado (va ANTES del parse: "sí" no trae monto)
+    # 4. Fase 7.2.1 — Gate comercial (ADR-0013): el consentimiento legal ya está, pero
+    #    además la suscripción debe tener acceso (activo/gratis/de_prueba). Va después
+    #    de ARCO (exportar/darse de baja siempre funcionan: son derechos legales) y
+    #    antes del dedupe y del parse: un teléfono vencido no consume OpenAI ni Sheets.
+    suscripcion = await obtener_suscripcion(sender_phone)
+    if not suscripcion_permite_uso(suscripcion):
+        logger.info("suscripcion: acceso bloqueado (sin registro o estado sin acceso).")
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone,
+            mensaje=mensaje_suscripcion_no_activa(suscripcion),
+        )
+        return file_path or ""
+
+    # 5. 8.6.2 — Confirmación de duplicado (va ANTES del parse: "sí" no trae monto)
     pendiente = await _leer_pendiente(sender_phone)
     if pendiente is not None:
         decision = detectar_confirmacion_duplicado(transcripcion)
@@ -289,7 +307,7 @@ async def _procesar_pipeline(
             )
             return file_path or ""
 
-    # 5. Flujo financiero normal (solo con consentimiento aceptado)
+    # 6. Flujo financiero normal (solo con consentimiento aceptado y suscripción al día)
     transaction_data = await parse_financial_text(transcripcion)
 
     if not transaction_data:
