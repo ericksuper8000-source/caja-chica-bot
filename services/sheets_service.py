@@ -342,3 +342,79 @@ async def obtener_transacciones_cliente(sender_phone: str) -> list[list[Any]]:
     except Exception as e:
         logger.error(f"Error inesperado al leer datos del cliente: {e}")
         return []
+
+
+# ==========================================
+# FASE 7.2.1 — SUSCRIPCIONES (ADR-0013): CONTROL COMERCIAL
+# ==========================================
+# Separación legal/comercial (ADR-0013): la pestaña `Suscripciones` la mantiene a mano
+# el fundador y el bot SOLO la lee (nunca escribe filas de clientes en el MVP). Las
+# columnas siguen el acuerdo de la auditoría 23/09/2026.
+SUSCRIPCIONES_TAB_NAME = "Suscripciones"
+SUSCRIPCION_HEADERS = [
+    "telefono",
+    "plan",
+    "estado",
+    "fecha_inicio",
+    "fecha_renovacion",
+    "ultimo_pago",
+]
+
+
+def _sync_get_suscripciones_worksheet(spreadsheet_id: str) -> Any:
+    """Devuelve la pestaña de suscripciones, creándola con encabezados si no existe."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    try:
+        worksheet = spreadsheet.worksheet(SUSCRIPCIONES_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=SUSCRIPCIONES_TAB_NAME, rows=100, cols=10)
+        worksheet.append_row(
+            SUSCRIPCION_HEADERS,
+            value_input_option=ValueInputOption.user_entered,
+        )
+    return worksheet
+
+
+def _sync_read_suscripcion(spreadsheet_id: str, sender_phone: str) -> dict[str, Any] | None:
+    """
+    Operación síncrona: lee el registro de suscripción del teléfono (columna A) y
+    retorna {'telefono', 'plan', 'estado', 'fecha_inicio', 'fecha_renovacion',
+    'ultimo_pago'} o None si no existe o si la fila está incompleta (sin estado).
+    """
+    worksheet = _sync_get_suscripciones_worksheet(spreadsheet_id)
+    phones = worksheet.col_values(1)
+    matches = [i for i, phone in enumerate(phones, start=1) if phone == sender_phone]
+    if not matches:
+        return None
+
+    last_row = matches[-1]
+    values = worksheet.row_values(last_row)
+    if len(values) < 3 or not values[2]:
+        return None
+    return {
+        "telefono": values[0],
+        "plan": values[1] if len(values) > 1 else "",
+        "estado": values[2],
+        "fecha_inicio": values[3] if len(values) > 3 else "",
+        "fecha_renovacion": values[4] if len(values) > 4 else "",
+        "ultimo_pago": values[5] if len(values) > 5 else "",
+    }
+
+
+async def obtener_suscripcion(sender_phone: str) -> dict[str, Any] | None:
+    """
+    Consulta el estado comercial del teléfono en la pestaña `Suscripciones`
+    (Fase 7.2.1, ADR-0013). Retorna el registro completo o None si el teléfono no
+    tiene suscripción registrada o hubo un error de lectura. El bot solo lee esta
+    pestaña: la actualiza a mano el fundador al recibir cada pago.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(_sync_read_suscripcion, spreadsheet_id, sender_phone)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al leer suscripción: {error}")
+        return None
+    except Exception as e:
+        logger.error(f"Error inesperado al leer suscripción: {e}")
+        return None
