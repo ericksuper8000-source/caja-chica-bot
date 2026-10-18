@@ -5,7 +5,8 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any
+from datetime import datetime
+from typing import Any, Literal
 
 import httpx
 import redis.asyncio as aioredis
@@ -41,6 +42,15 @@ from services.politica_service import (
     detectar_respuesta_exportacion_baja,
     politica_aceptada_vigente,
 )
+from services.reporte_service import (
+    ZONA_CR,
+    calcular_resumen,
+    detectar_solicitud_reporte,
+    formatear_caption,
+    formatear_texto,
+    render_reporte_png,
+    texto_sin_movimientos,
+)
 from services.sheets_service import (
     append_transaction_to_sheet,
     obtener_consentimiento,
@@ -53,7 +63,11 @@ from services.suscripcion_service import (
     mensaje_suscripcion_no_activa,
     suscripcion_permite_uso,
 )
-from services.whatsapp_service import dividir_mensaje_largo, enviar_mensaje_whatsapp
+from services.whatsapp_service import (
+    dividir_mensaje_largo,
+    enviar_imagen_whatsapp,
+    enviar_mensaje_whatsapp,
+)
 from workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -189,6 +203,37 @@ def _formatear_movimiento(fila: list[str]) -> str:
     return f"{fecha} · {monto_formateado} · {categoria} · {detalle}"
 
 
+async def _enviar_reporte_caja(sender_phone: str, periodo: Literal["semana", "mes"]) -> None:
+    """
+    Sprint de Valor Visible (S4/S4b) — Arma el reporte pedido por chat y lo envía
+    como tarjeta PNG + caption; si la tarjeta no se puede generar o enviar, degrada
+    al texto completo. La tarjeta es cosmética: jamás tira el pipeline.
+    """
+    filas = await obtener_transacciones_cliente(sender_phone)
+    resumen = calcular_resumen(filas, periodo, datetime.now(ZONA_CR))
+
+    if not resumen.tiene_datos:
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=texto_sin_movimientos(periodo))
+        return
+
+    try:
+        enviado = await enviar_imagen_whatsapp(
+            to_phone=sender_phone,
+            imagen=render_reporte_png(resumen),
+            caption=formatear_caption(resumen),
+        )
+    except Exception as exc:  # noqa: BLE001 - degradar a texto, nunca perder el dato
+        logger.error("reporte: falló la generación de la tarjeta (%s); plan B en texto.", exc)
+        enviado = False
+
+    if enviado:
+        logger.info("reporte: tarjeta de %s enviada a %s.", periodo, sender_phone)
+        return
+
+    for bloque in dividir_mensaje_largo(formatear_texto(resumen)):
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=bloque)
+
+
 async def _procesar_pipeline(
     file_path: str | None, sender_phone: str, texto_entrante: str | None = None
 ) -> str:
@@ -284,7 +329,16 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
-    # 5. 8.6.2 — Confirmación de duplicado (va ANTES del parse: "sí" no trae monto)
+    # 5. Sprint de Valor Visible — Reportes de caja (S4/S4b V1): pedido determinista
+    #    (sin GPT) de "resumen de la semana" / "reporte del mes". Va después del gate
+    #    comercial (el reporte es una función de valor, no un derecho legal como ARCO)
+    #    y antes del dedupe: un pedido de reporte no es una transacción.
+    periodo_reporte = detectar_solicitud_reporte(transcripcion)
+    if periodo_reporte is not None:
+        await _enviar_reporte_caja(sender_phone, periodo_reporte)
+        return file_path or ""
+
+    # 6. 8.6.2 — Confirmación de duplicado (va ANTES del parse: "sí" no trae monto)
     pendiente = await _leer_pendiente(sender_phone)
     if pendiente is not None:
         decision = detectar_confirmacion_duplicado(transcripcion)
@@ -305,7 +359,7 @@ async def _procesar_pipeline(
             )
             return file_path or ""
 
-    # 6. Flujo financiero normal (solo con consentimiento aceptado y suscripción al día)
+    # 7. Flujo financiero normal (solo con consentimiento aceptado y suscripción al día)
     transaction_data = await parse_financial_text(transcripcion)
 
     if not transaction_data:
