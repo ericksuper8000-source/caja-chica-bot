@@ -18,10 +18,12 @@ from services.consulta_service import (
     calcular_consulta_categoria,
     calcular_consulta_comparacion,
     calcular_consulta_mayor,
+    calcular_consulta_presupuesto_restante,
     detectar_consulta,
     formatear_resultado_categoria,
     formatear_resultado_comparacion,
     formatear_resultado_mayor,
+    formatear_resultado_presupuesto_restante,
 )
 from services.duplicado_service import (
     TEXTO_CONFIRMACION_DUPLICADO,
@@ -260,9 +262,16 @@ async def _enviar_consulta(
     Siempre responde en texto (no tarjeta). Nunca tira el pipeline.
     """
     try:
-        if hasattr(consulta, "categoria"):
-            res_cat = await calcular_consulta_categoria(sender_phone, consulta)
-            mensaje = formatear_resultado_categoria(res_cat)
+        if hasattr(consulta, "categoria") and not hasattr(consulta, "periodo_base"):
+            # ConsultaCategoria o ConsultaPresupuestoRestante
+            if hasattr(consulta, "periodo"):
+                # ConsultaCategoria tiene periodo
+                res_cat = await calcular_consulta_categoria(sender_phone, consulta)
+                mensaje = formatear_resultado_categoria(res_cat)
+            else:
+                # ConsultaPresupuestoRestante no tiene periodo
+                res_presup = await calcular_consulta_presupuesto_restante(sender_phone, consulta)
+                mensaje = formatear_resultado_presupuesto_restante(res_presup)
         elif hasattr(consulta, "periodo") and getattr(consulta, "periodo", None) in (
             "semana",
             "mes",

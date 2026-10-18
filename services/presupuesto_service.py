@@ -99,7 +99,7 @@ async def verificar_y_alertar_presupuesto(
 
 def detectar_presupuesto(texto: str) -> tuple[str, int] | None:
     """
-    Detecta comando de presupuesto: "presupuesto comida 50000"
+    Detecta comando de presupuesto: "presupuesto comida 50000" o "presupuesto de comida 10000"
     Retorna (categoria, limite) o None.
     """
     import re
@@ -111,10 +111,15 @@ def detectar_presupuesto(texto: str) -> tuple[str, int] | None:
         return None
 
     partes = t.split()
-    if len(partes) != 3:
+    # Aceptar "presupuesto comida 10000" (3 partes) o "presupuesto de comida 10000" (4 partes)
+    if len(partes) not in (3, 4):
         return None
 
-    _, categoria_raw, limite_raw = partes
+    # Si tiene 4 partes y la segunda es "de", saltarla
+    if len(partes) == 4 and partes[1] == "de":
+        _, _, categoria_raw, limite_raw = partes
+    else:
+        _, categoria_raw, limite_raw = partes
 
     try:
         limite = int(limite_raw)
@@ -156,7 +161,7 @@ def detectar_presupuesto(texto: str) -> tuple[str, int] | None:
 
 
 def detectar_eliminar_presupuesto(texto: str) -> str | None:
-    """Detecta: 'borrar presupuesto comida' o 'eliminar presupuesto comida'."""
+    """Detecta: 'borrar presupuesto comida' o 'eliminar presupuesto de comida'."""
     import re
 
     t = texto.lower().strip()
@@ -166,18 +171,25 @@ def detectar_eliminar_presupuesto(texto: str) -> str | None:
         if t.startswith(f"{verbo} presupuesto"):
             partes = t.split()
             if len(partes) >= 3:
-                categoria_raw = partes[2]
-                sinónimos = {
-                    "comida": "alimentacion",
-                    "alimentos": "alimentacion",
-                    "transporte": "transporte",
-                    "bus": "transporte",
-                    "taxi": "transporte",
-                    "uber": "transporte",
-                    "vivienda": "vivienda",
-                    "servicios": "servicios",
-                    "salud": "salud",
-                    "otros": "otros",
-                }
-                return sinónimos.get(categoria_raw.lower().strip(), categoria_raw.lower().strip())
+                # Saltar "de" si está en posición 2: "borrar presupuesto de comida"
+                idx_categoria = 2
+                if len(partes) >= 4 and partes[2] == "de":
+                    idx_categoria = 3
+                if idx_categoria < len(partes):
+                    categoria_raw = partes[idx_categoria]
+                    sinónimos = {
+                        "comida": "alimentacion",
+                        "alimentos": "alimentacion",
+                        "transporte": "transporte",
+                        "bus": "transporte",
+                        "taxi": "transporte",
+                        "uber": "transporte",
+                        "vivienda": "vivienda",
+                        "servicios": "servicios",
+                        "salud": "salud",
+                        "otros": "otros",
+                    }
+                    return sinónimos.get(
+                        categoria_raw.lower().strip(), categoria_raw.lower().strip()
+                    )
     return None

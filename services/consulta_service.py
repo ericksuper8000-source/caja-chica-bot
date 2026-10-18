@@ -94,6 +94,20 @@ class ConsultaComparacion:
 
 
 @dataclass
+class ConsultaPresupuestoRestante:
+    categoria: str
+
+
+@dataclass
+class ResultadoPresupuestoRestante:
+    limite: int
+    gastado: int
+    restante: int
+    categoria: str
+    pct_usado: int
+
+
+@dataclass
 class ResultadoCategoria:
     total: int
     count: int
@@ -173,7 +187,7 @@ async def _categorias_reales(sender_phone: str) -> set[str]:
 
 async def detectar_consulta(
     sender_phone: str, texto: str
-) -> ConsultaCategoria | ConsultaMayor | ConsultaComparacion | None:
+) -> ConsultaCategoria | ConsultaMayor | ConsultaComparacion | ConsultaPresupuestoRestante | None:
     t = _limpiar_texto(texto)
     if not t:
         return None
@@ -236,6 +250,20 @@ async def detectar_consulta(
             else:
                 periodo = "mes"
         return ConsultaMayor(periodo=periodo)
+
+    # 3. Consulta de presupuesto restante:
+    # "cuanto me queda en X", "cuanto queda en X", "cuanto me queda de X"
+    if any(
+        kw in t
+        for kw in [
+            "cuanto me queda",
+            "cuanto queda",
+            "cuanto me queda de",
+        ]
+    ):
+        categoria = _categoria_match_en_texto(cats, t)
+        if categoria:
+            return ConsultaPresupuestoRestante(categoria=categoria)
 
     # 3. Consulta por categoría + período (usa SUS categorías reales)
     for mes_nombre, mes_num in MESES_ES.items():
@@ -475,6 +503,56 @@ async def calcular_consulta_comparacion(
     )
 
 
+async def calcular_consulta_presupuesto_restante(
+    sender_phone: str, consulta: ConsultaPresupuestoRestante
+) -> ResultadoPresupuestoRestante | None:
+    """Calcula cuánto queda del presupuesto para una categoría en el mes actual."""
+    from services.presupuesto_service import obtener_presupuesto_categoria
+
+    limite = await obtener_presupuesto_categoria(sender_phone, consulta.categoria)
+    if limite is None:
+        return None
+
+    rows = await obtener_transacciones_cliente(sender_phone)
+    if not rows:
+        return ResultadoPresupuestoRestante(
+            limite=limite, gastado=0, restante=limite, categoria=consulta.categoria, pct_usado=0
+        )
+
+    hoy = datetime.now()
+    inicio_mes = hoy.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    gastado = 0
+    for row in rows:
+        if len(row) < 3:
+            continue
+        try:
+            dt = datetime.fromisoformat(row[0].replace("/", "-"))
+        except ValueError:
+            continue
+        if dt < inicio_mes:
+            continue
+        if not _coincide_categoria(row[2], consulta.categoria):
+            continue
+        try:
+            monto = int(row[1])
+        except (ValueError, TypeError):
+            continue
+        if monto < 0:
+            gastado += abs(monto)
+
+    restante = max(0, limite - gastado)
+    pct_usado = (gastado * 100 // limite) if limite > 0 else 0
+
+    return ResultadoPresupuestoRestante(
+        limite=limite,
+        gastado=gastado,
+        restante=restante,
+        categoria=consulta.categoria,
+        pct_usado=pct_usado,
+    )
+
+
 def formatear_resultado_categoria(res: ResultadoCategoria) -> str:
     if res.total == 0:
         return f"No hay gastos en {res.categoria} {res.periodo_desc}."
@@ -497,4 +575,18 @@ def formatear_resultado_comparacion(res: ResultadoComparacion | None) -> str:
     return (
         f"Gastaste ₡{res.actual_total:,} {res.periodo_desc.split(' vs ')[0]} "
         f"vs ₡{res.anterior_total:,} anterior ({signo}{res.pct_cambio}%)."
+    )
+
+
+def formatear_resultado_presupuesto_restante(res: ResultadoPresupuestoRestante | None) -> str:
+    if not res:
+        return "No tenés presupuesto configurado para esa categoría."
+    if res.restante <= 0:
+        return (
+            f"⚠️ Presupuesto {res.categoria} agotado: "
+            f"gastaste ₡{res.gastado:,} de ₡{res.limite:,} ({res.pct_usado}%)."
+        )
+    return (
+        f"Te quedan ₡{res.restante:,} de ₡{res.limite:,} en {res.categoria} "
+        f"({res.pct_usado}% usado)."
     )
