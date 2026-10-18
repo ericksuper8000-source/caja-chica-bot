@@ -580,7 +580,10 @@ def formatear_resultado_comparacion(res: ResultadoComparacion | None) -> str:
 
 def formatear_resultado_presupuesto_restante(res: ResultadoPresupuestoRestante | None) -> str:
     if not res:
-        return "No tenés presupuesto en esa categoría. Crealo con: `presupuesto <categoría> <monto>`"
+        return (
+            "No tenés presupuesto en esa categoría. "
+            "Crealo con: `presupuesto <categoría> <monto>`"
+        )
     if res.restante <= 0:
         return (
             f"⚠️ Presupuesto {res.categoria} agotado: "

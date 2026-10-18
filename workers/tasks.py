@@ -254,18 +254,19 @@ async def _enviar_consulta(
     sender_phone: str,
     consulta: ConsultaCategoria | ConsultaMayor | ConsultaComparacion | ConsultaPresupuestoRestante,
 ) -> None:
+    mensaje: str
     if isinstance(consulta, ConsultaCategoria):
-        resultado = await calcular_consulta_categoria(sender_phone, consulta)
-        mensaje = formatear_resultado_categoria(resultado)
+        res_cat = await calcular_consulta_categoria(sender_phone, consulta)
+        mensaje = formatear_resultado_categoria(res_cat)
     elif isinstance(consulta, ConsultaMayor):
-        resultado = await calcular_consulta_mayor(sender_phone, consulta)
-        mensaje = formatear_resultado_mayor(resultado)
+        res_mayor = await calcular_consulta_mayor(sender_phone, consulta)
+        mensaje = formatear_resultado_mayor(res_mayor)
     elif isinstance(consulta, ConsultaComparacion):
-        resultado = await calcular_consulta_comparacion(sender_phone, consulta)
-        mensaje = formatear_resultado_comparacion(resultado)
+        res_comp = await calcular_consulta_comparacion(sender_phone, consulta)
+        mensaje = formatear_resultado_comparacion(res_comp)
     elif isinstance(consulta, ConsultaPresupuestoRestante):
-        resultado = await calcular_consulta_presupuesto_restante(sender_phone, consulta)
-        mensaje = formatear_resultado_presupuesto_restante(resultado)
+        res_presup = await calcular_consulta_presupuesto_restante(sender_phone, consulta)
+        mensaje = formatear_resultado_presupuesto_restante(res_presup)
     else:
         return
 
@@ -280,20 +281,20 @@ async def _enviar_consulta(
 async def _procesar_presupuesto(sender_phone: str, transcripcion: str) -> bool:
     presupuesto = detectar_presupuesto(transcripcion)
     if presupuesto:
-        categoria, limite = presupuesto
-        await establecer_presupuesto(sender_phone, categoria, limite)
+        cat_nueva, limite = presupuesto
+        await establecer_presupuesto(sender_phone, cat_nueva, limite)
         await enviar_mensaje_whatsapp(
             to_phone=sender_phone,
-            mensaje=f"Presupuesto {categoria}: ₡{limite:,}/mes guardado.",
+            mensaje=f"Presupuesto {cat_nueva}: ₡{limite:,}/mes guardado.",
         )
         return True
 
-    categoria = detectar_eliminar_presupuesto(transcripcion)
-    if categoria:
-        await eliminar_presupuesto(sender_phone, categoria)
+    cat_eliminar = detectar_eliminar_presupuesto(transcripcion)
+    if cat_eliminar:
+        await eliminar_presupuesto(sender_phone, cat_eliminar)
         await enviar_mensaje_whatsapp(
             to_phone=sender_phone,
-            mensaje=f"Presupuesto eliminado: {categoria}.",
+            mensaje=f"Presupuesto eliminado: {cat_eliminar}.",
         )
         return True
 
