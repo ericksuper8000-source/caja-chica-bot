@@ -189,7 +189,11 @@ def detectar_eliminar_presupuesto(texto: str) -> str | None:
                         "salud": "salud",
                         "otros": "otros",
                     }
-                    return sinónimos.get(
+                    cat = sinónimos.get(
                         categoria_raw.lower().strip(), categoria_raw.lower().strip()
                     )
+                    # Defensa: si por alguna razón devolvimos "de", forzar None
+                    if cat == "de":
+                        return None
+                    return cat
     return None

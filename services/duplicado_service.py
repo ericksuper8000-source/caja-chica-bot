@@ -31,7 +31,8 @@ TTL_DEDUPE_SEGUNDOS = 600
 VENTANA_MISMO_HASH_SEGUNDOS = 120
 
 TEXTO_CONFIRMACION_DUPLICADO = (
-    "Ese gasto ya lo apunté hace un momento. ¿Querés que lo registre otra vez " "o era el mismo?"
+    "Ese gasto ya lo apunté hace un momento.\n"
+    "¿Querés que lo registre **otra vez** o era **el mismo**?"
 )
 TEXTO_DUPLICADO_DESCARTADO = "Listo, no lo registro de nuevo. Queda una sola vez."
 TEXTO_DUPLICADO_CONFIRMADO = "Ok, lo registré otra vez."

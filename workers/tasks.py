@@ -14,7 +14,10 @@ import redis.asyncio as aioredis
 from app.config import settings
 from services.backup_service import crear_backup
 from services.consulta_service import (
-    _normalizar_categoria,
+    ConsultaCategoria,
+    ConsultaComparacion,
+    ConsultaMayor,
+    ConsultaPresupuestoRestante,
     calcular_consulta_categoria,
     calcular_consulta_comparacion,
     calcular_consulta_mayor,
@@ -59,7 +62,6 @@ from services.presupuesto_service import (
     detectar_presupuesto,
     eliminar_presupuesto,
     establecer_presupuesto,
-    verificar_y_alertar_presupuesto,
 )
 from services.reporte_service import (
     ZONA_CR,
@@ -222,110 +224,77 @@ def _formatear_movimiento(fila: list[str]) -> str:
     return f"{fecha} · {monto_formateado} · {categoria} · {detalle}"
 
 
+# ==========================================
+# Sprint de Valor Visible — Reportes (S4/S4b, V1)
+# ==========================================
 async def _enviar_reporte_caja(sender_phone: str, periodo: Literal["semana", "mes"]) -> None:
-    """
-    Sprint de Valor Visible (S4/S4b) — Arma el reporte pedido por chat y lo envía
-    como tarjeta PNG + caption; si la tarjeta no se puede generar o enviar, degrada
-    al texto completo. La tarjeta es cosmética: jamás tira el pipeline.
-    """
     filas = await obtener_transacciones_cliente(sender_phone)
-    resumen = calcular_resumen(filas, periodo, datetime.now(ZONA_CR))
-
-    if not resumen.tiene_datos:
-        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=texto_sin_movimientos(periodo))
-        return
-
-    try:
-        enviado = await enviar_imagen_whatsapp(
+    if not filas:
+        await enviar_mensaje_whatsapp(
             to_phone=sender_phone,
-            imagen=render_reporte_png(resumen),
-            caption=formatear_caption(resumen),
+            mensaje=texto_sin_movimientos(periodo),
         )
-    except Exception as exc:  # noqa: BLE001 - degradar a texto, nunca perder el dato
-        logger.error("reporte: falló la generación de la tarjeta (%s); plan B en texto.", exc)
-        enviado = False
-
-    if enviado:
-        logger.info("reporte: tarjeta de %s enviada a %s.", periodo, sender_phone)
         return
 
-    for bloque in dividir_mensaje_largo(formatear_texto(resumen)):
+    desde = datetime.now(ZONA_CR)
+    resumen = calcular_resumen(filas, periodo, desde)
+    png = render_reporte_png(resumen)
+    caption = formatear_caption(resumen)
+    enviada = await enviar_imagen_whatsapp(to_phone=sender_phone, imagen=png, caption=caption)
+    if not enviada:
+        bloques = dividir_mensaje_largo(formatear_texto(resumen))
+        for bloque in bloques:
+            await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=bloque)
+
+
+# ==========================================
+# Consultas de caja (Step 2)
+# ==========================================
+async def _enviar_consulta(
+    sender_phone: str,
+    consulta: ConsultaCategoria | ConsultaMayor | ConsultaComparacion | ConsultaPresupuestoRestante,
+) -> None:
+    if isinstance(consulta, ConsultaCategoria):
+        resultado = await calcular_consulta_categoria(sender_phone, consulta)
+        mensaje = formatear_resultado_categoria(resultado)
+    elif isinstance(consulta, ConsultaMayor):
+        resultado = await calcular_consulta_mayor(sender_phone, consulta)
+        mensaje = formatear_resultado_mayor(resultado)
+    elif isinstance(consulta, ConsultaComparacion):
+        resultado = await calcular_consulta_comparacion(sender_phone, consulta)
+        mensaje = formatear_resultado_comparacion(resultado)
+    elif isinstance(consulta, ConsultaPresupuestoRestante):
+        resultado = await calcular_consulta_presupuesto_restante(sender_phone, consulta)
+        mensaje = formatear_resultado_presupuesto_restante(resultado)
+    else:
+        return
+
+    bloques = dividir_mensaje_largo(mensaje)
+    for bloque in bloques:
         await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=bloque)
 
 
-async def _enviar_consulta(
-    sender_phone: str,
-    consulta: Any,
-) -> None:
-    """
-    Sprint de Valor Visible (6.6) — Responde consultas deterministas por chat.
-    Siempre responde en texto (no tarjeta). Nunca tira el pipeline.
-    """
-    try:
-        if hasattr(consulta, "categoria") and not hasattr(consulta, "periodo_base"):
-            # ConsultaCategoria o ConsultaPresupuestoRestante
-            if hasattr(consulta, "periodo"):
-                # ConsultaCategoria tiene periodo
-                res_cat = await calcular_consulta_categoria(sender_phone, consulta)
-                mensaje = formatear_resultado_categoria(res_cat)
-            else:
-                # ConsultaPresupuestoRestante no tiene periodo
-                res_presup = await calcular_consulta_presupuesto_restante(sender_phone, consulta)
-                mensaje = formatear_resultado_presupuesto_restante(res_presup)
-        elif hasattr(consulta, "periodo") and getattr(consulta, "periodo", None) in (
-            "semana",
-            "mes",
-            "semana_pasada",
-            "mes_pasada",
-            "todo",
-        ):
-            res_mayor = await calcular_consulta_mayor(sender_phone, consulta)
-            mensaje = formatear_resultado_mayor(res_mayor)
-        else:
-            res_comp = await calcular_consulta_comparacion(sender_phone, consulta)
-            mensaje = formatear_resultado_comparacion(res_comp)
-    except Exception as exc:  # noqa: BLE001 - no perder el dato
-        logger.error("consulta: falló el cálculo (%s).", exc)
-        mensaje = "No pude calcular la consulta. Intentá de nuevo."
-
-    await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=mensaje)
-    logger.info("consulta: respuesta enviada a %s.", sender_phone)
-
-
+# ==========================================
+# Presupuestos (Step 2)
+# ==========================================
 async def _procesar_presupuesto(sender_phone: str, transcripcion: str) -> bool:
-    """
-    Sprint de Valor Visible (7.6) — Procesa comandos de presupuesto.
-    Detecta: "presupuesto X N" (setear) y "borrar presupuesto X" (eliminar).
-    Retorna True si procesó un comando de presupuesto.
-    """
-    # Detectar eliminación: "borrar presupuesto X"
-    cat_eliminar = detectar_eliminar_presupuesto(transcripcion)
-    if cat_eliminar:
-        ok = await eliminar_presupuesto(sender_phone, cat_eliminar)
-        if ok:
-            await enviar_mensaje_whatsapp(
-                to_phone=sender_phone, mensaje=f"Presupuesto de {cat_eliminar} eliminado."
-            )
-        else:
-            await enviar_mensaje_whatsapp(
-                to_phone=sender_phone, mensaje=f"No tenías presupuesto para {cat_eliminar}."
-            )
-        return True
-
-    # Detectar establecimiento: "presupuesto X N"
     presupuesto = detectar_presupuesto(transcripcion)
     if presupuesto:
         categoria, limite = presupuesto
-        ok = await establecer_presupuesto(sender_phone, categoria, limite)
-        if ok:
-            await enviar_mensaje_whatsapp(
-                to_phone=sender_phone, mensaje=f"Presupuesto {categoria}: ₡{limite:,}/mes guardado."
-            )
-        else:
-            await enviar_mensaje_whatsapp(
-                to_phone=sender_phone,
-                mensaje="No pude guardar el presupuesto. El monto debe ser mayor a 0.",
-            )
+        await establecer_presupuesto(sender_phone, categoria, limite)
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone,
+            mensaje=f"Presupuesto {categoria}: ₡{limite:,}/mes guardado.",
+        )
+        return True
+
+    categoria = detectar_eliminar_presupuesto(transcripcion)
+    if categoria:
+        await eliminar_presupuesto(sender_phone, categoria)
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone,
+            mensaje=f"Presupuesto eliminado: {categoria}.",
+        )
         return True
 
     return False
@@ -401,7 +370,9 @@ async def _procesar_pipeline(
             return file_path or ""
 
         movimientos = "\n".join(_formatear_movimiento(fila) for fila in filas)
-        for bloque in dividir_mensaje_largo(f"{TEXTO_EXPORTACION_ENCABEZADO}\n{movimientos}"):
+        texto_completo = f"{TEXTO_EXPORTACION_ENCABEZADO}\n{movimientos}"
+        bloques = dividir_mensaje_largo(texto_completo)
+        for bloque in bloques:
             await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=bloque)
         return file_path or ""
 
@@ -413,43 +384,32 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
-    # 4. Fase 7.2.1 — Gate comercial (ADR-0013): el consentimiento legal ya está, pero
-    #    además la suscripción debe tener acceso (activo/gratis/de_prueba). Va después
-    #    de ARCO (exportar/darse de baja siempre funcionan: son derechos legales) y
-    #    antes del dedupe y del parse: un teléfono vencido no consume OpenAI ni Sheets.
+    # 3.5 Gate comercial (Fase 7.2.1, ADR-0013): suscripción vigente
     suscripcion = await obtener_suscripcion(sender_phone)
     if not suscripcion_permite_uso(suscripcion):
-        logger.info("suscripcion: acceso bloqueado (sin registro o estado sin acceso).")
         await enviar_mensaje_whatsapp(
             to_phone=sender_phone,
             mensaje=mensaje_suscripcion_no_activa(suscripcion),
         )
         return file_path or ""
 
-    # 5. Sprint de Valor Visible — Reportes de caja (S4/S4b V1): pedido determinista
-    #    (sin GPT) de "resumen de la semana" / "reporte del mes". Va después del gate
-    #    comercial (el reporte es una función de valor, no un derecho legal como ARCO)
-    #    y antes del dedupe: un pedido de reporte no es una transacción.
+    # 3.6 Sprint Valor Visible — Reportes de caja (S4/S4b, V1)
     periodo_reporte = detectar_solicitud_reporte(transcripcion)
-    if periodo_reporte is not None:
+    if periodo_reporte:
         await _enviar_reporte_caja(sender_phone, periodo_reporte)
         return file_path or ""
 
-    # 6. Sprint de Valor Visible — Consultas completas (6.6 V1): detección determinista
-    #    de "cuanto gaste en X", "mayor gasto", "comparación". Va después del reporte
-    #    y antes del dedupe/parse: una consulta no es una transacción.
+    # 3.7 Consultas de caja (cuánto gasté, comparaciones, presupuesto restante)
     consulta = await detectar_consulta(sender_phone, transcripcion)
-    if consulta is not None:
+    if consulta:
         await _enviar_consulta(sender_phone, consulta)
         return file_path or ""
 
-    # 7. Sprint de Valor Visible — Presupuestos (7.6 V1): detección determinista
-    #    de "presupuesto X N", "borrar presupuesto X". Va después de consultas
-    #    y antes del dedupe/parse: un pedido de presupuesto no es una transacción.
+    # 3.8 Presupuestos: "presupuesto <categoría> <monto>" / "borrar presupuesto <categoría>"
     if await _procesar_presupuesto(sender_phone, transcripcion):
         return file_path or ""
 
-    # 8. 8.6.2 — Confirmación de duplicado (va ANTES del parse: "sí" no trae monto)
+    # 4. 8.6.2 — Confirmación de duplicado (va ANTES del parse: "sí" no trae monto)
     pendiente = await _leer_pendiente(sender_phone)
     if pendiente is not None:
         decision = detectar_confirmacion_duplicado(transcripcion)
@@ -470,7 +430,7 @@ async def _procesar_pipeline(
             )
             return file_path or ""
 
-    # 7. Flujo financiero normal (solo con consentimiento aceptado y suscripción al día)
+    # 5. Flujo financiero normal (solo con consentimiento aceptado)
     transaction_data = await parse_financial_text(transcripcion)
 
     if not transaction_data:
@@ -554,34 +514,6 @@ async def _procesar_pipeline(
         await _marcar_ultimo_registro(sender_phone, transaction_data, media_id)
     else:
         await append_transaction_to_sheet(transaction_data, sender_phone)
-
-    # Sprint de Valor Visible (7.6) — Verificar presupuesto tras registrar gasto
-    if transaction_data["monto"] < 0:  # solo gastos
-        categoria = transaction_data["categoria"]
-        monto = abs(transaction_data["monto"])
-        # Obtener total del mes para la categoría
-        filas = await obtener_transacciones_cliente(sender_phone)
-        total_mes = 0
-        from datetime import datetime
-
-        hoy = datetime.now()
-        inicio_mes = hoy.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        for row in filas:
-            if len(row) < 3:
-                continue
-            try:
-                dt = datetime.fromisoformat(row[0].replace("/", "-"))
-                cat_row = _normalizar_categoria(row[2])
-                cat_target = _normalizar_categoria(categoria)
-                if dt >= inicio_mes and cat_row == cat_target:
-                    m = int(row[1])
-                    if m < 0:
-                        total_mes += abs(m)
-            except Exception:
-                pass
-        alerta = await verificar_y_alertar_presupuesto(sender_phone, categoria, monto, total_mes)
-        if alerta:
-            await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=alerta)
 
     await enviar_mensaje_whatsapp(
         to_phone=sender_phone,
