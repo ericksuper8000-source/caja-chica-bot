@@ -14,6 +14,7 @@ import redis.asyncio as aioredis
 from app.config import settings
 from services.backup_service import crear_backup
 from services.consulta_service import (
+    _normalizar_categoria,
     calcular_consulta_categoria,
     calcular_consulta_comparacion,
     calcular_consulta_mayor,
@@ -50,6 +51,13 @@ from services.politica_service import (
     detectar_respuesta_consentimiento,
     detectar_respuesta_exportacion_baja,
     politica_aceptada_vigente,
+)
+from services.presupuesto_service import (
+    detectar_eliminar_presupuesto,
+    detectar_presupuesto,
+    eliminar_presupuesto,
+    establecer_presupuesto,
+    verificar_y_alertar_presupuesto,
 )
 from services.reporte_service import (
     ZONA_CR,
@@ -275,6 +283,45 @@ async def _enviar_consulta(
     logger.info("consulta: respuesta enviada a %s.", sender_phone)
 
 
+async def _procesar_presupuesto(sender_phone: str, transcripcion: str) -> bool:
+    """
+    Sprint de Valor Visible (7.6) — Procesa comandos de presupuesto.
+    Detecta: "presupuesto X N" (setear) y "borrar presupuesto X" (eliminar).
+    Retorna True si procesó un comando de presupuesto.
+    """
+    # Detectar eliminación: "borrar presupuesto X"
+    cat_eliminar = detectar_eliminar_presupuesto(transcripcion)
+    if cat_eliminar:
+        ok = await eliminar_presupuesto(sender_phone, cat_eliminar)
+        if ok:
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone, mensaje=f"Presupuesto de {cat_eliminar} eliminado."
+            )
+        else:
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone, mensaje=f"No tenías presupuesto para {cat_eliminar}."
+            )
+        return True
+
+    # Detectar establecimiento: "presupuesto X N"
+    presupuesto = detectar_presupuesto(transcripcion)
+    if presupuesto:
+        categoria, limite = presupuesto
+        ok = await establecer_presupuesto(sender_phone, categoria, limite)
+        if ok:
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone, mensaje=f"Presupuesto {categoria}: ₡{limite:,}/mes guardado."
+            )
+        else:
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone,
+                mensaje="No pude guardar el presupuesto. El monto debe ser mayor a 0.",
+            )
+        return True
+
+    return False
+
+
 async def _procesar_pipeline(
     file_path: str | None, sender_phone: str, texto_entrante: str | None = None
 ) -> str:
@@ -387,7 +434,13 @@ async def _procesar_pipeline(
         await _enviar_consulta(sender_phone, consulta)
         return file_path or ""
 
-    # 7. 8.6.2 — Confirmación de duplicado (va ANTES del parse: "sí" no trae monto)
+    # 7. Sprint de Valor Visible — Presupuestos (7.6 V1): detección determinista
+    #    de "presupuesto X N", "borrar presupuesto X". Va después de consultas
+    #    y antes del dedupe/parse: un pedido de presupuesto no es una transacción.
+    if await _procesar_presupuesto(sender_phone, transcripcion):
+        return file_path or ""
+
+    # 8. 8.6.2 — Confirmación de duplicado (va ANTES del parse: "sí" no trae monto)
     pendiente = await _leer_pendiente(sender_phone)
     if pendiente is not None:
         decision = detectar_confirmacion_duplicado(transcripcion)
@@ -492,6 +545,34 @@ async def _procesar_pipeline(
         await _marcar_ultimo_registro(sender_phone, transaction_data, media_id)
     else:
         await append_transaction_to_sheet(transaction_data, sender_phone)
+
+    # Sprint de Valor Visible (7.6) — Verificar presupuesto tras registrar gasto
+    if transaction_data["monto"] < 0:  # solo gastos
+        categoria = transaction_data["categoria"]
+        monto = abs(transaction_data["monto"])
+        # Obtener total del mes para la categoría
+        filas = await obtener_transacciones_cliente(sender_phone)
+        total_mes = 0
+        from datetime import datetime
+
+        hoy = datetime.now()
+        inicio_mes = hoy.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        for row in filas:
+            if len(row) < 3:
+                continue
+            try:
+                dt = datetime.fromisoformat(row[0].replace("/", "-"))
+                cat_row = _normalizar_categoria(row[2])
+                cat_target = _normalizar_categoria(categoria)
+                if dt >= inicio_mes and cat_row == cat_target:
+                    m = int(row[1])
+                    if m < 0:
+                        total_mes += abs(m)
+            except Exception:
+                pass
+        alerta = await verificar_y_alertar_presupuesto(sender_phone, categoria, monto, total_mes)
+        if alerta:
+            await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=alerta)
 
     await enviar_mensaje_whatsapp(
         to_phone=sender_phone,
