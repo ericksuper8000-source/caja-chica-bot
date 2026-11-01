@@ -162,10 +162,24 @@ class TestFiltrarPorPeriodo:
             filtradas = _filtrar_por_periodo(filas, "mes_pasado")
         assert [fila[0] for fila in filtradas] == ["2026-10-31"]
 
+    def test_produccion_con_hora_no_descarta_filas(self) -> None:
+        # Regresión: producción guarda "YYYY-MM-DD HH:MM:SS"; antes _parse_fecha
+        # devolvía None y se descartaban todas las filas.
+        filas = [
+            ["2026-11-01 19:15:59", "-1000", "comida", "cafe", "506..."],
+            ["2026-11-01 19:18:40", "-1500", "comida", "sandia", "506..."],
+            ["2026-10-25 10:00:00", "-9000", "comida", "domingo anterior", "506..."],
+        ]
+        with _reloj_fijo(2026, 11, 1):
+            filtradas = _filtrar_por_periodo(filas, "semana")
+        assert len(filtradas) == 2
+
     def test_parse_fecha(self) -> None:
         assert _parse_fecha("2026-10-15") == datetime(2026, 10, 15)
         assert _parse_fecha("15/10/2026") == datetime(2026, 10, 15)
         assert _parse_fecha("15-10-2026") == datetime(2026, 10, 15)
+        # Producción guarda fecha con hora (append_transaction_to_sheet)
+        assert _parse_fecha("2026-11-01 19:15:59") == datetime(2026, 11, 1, 19, 15, 59)
         assert _parse_fecha("invalido") is None
 
 
