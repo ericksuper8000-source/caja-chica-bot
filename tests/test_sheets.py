@@ -12,12 +12,15 @@ from services.sheets_service import (
 )
 
 
+@patch("services.sheets_service._sheets_client", None)
 @patch("services.sheets_service.gspread.service_account")
 def test_get_sheets_client_success(mock_service_account):
     """Prueba que el cliente de gspread se inicialice correctamente usando el archivo de entorno."""
     mock_client_instance = MagicMock()
     mock_service_account.return_value = mock_client_instance
 
+    # El cliente se cachea a nivel de módulo; forzamos None para que este test
+    # ejercite la inicialización aunque la suite completa ya haya usado el cache.
     # Ejecutar la función
     client = get_sheets_client()
 

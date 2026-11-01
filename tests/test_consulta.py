@@ -10,6 +10,7 @@ from services.consulta_service import (
     ResultadoCategoria,
     ResultadoComparacion,
     ResultadoMayor,
+    _filtrar_por_periodo,
     _parse_fecha,
     calcular_consulta_categoria,
     calcular_consulta_comparacion,
@@ -19,6 +20,15 @@ from services.consulta_service import (
     formatear_resultado_comparacion,
     formatear_resultado_mayor,
 )
+
+
+def _reloj_fijo(anio: int, mes: int, dia: int):
+    class RelojFijo(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(anio, mes, dia, 12, 0, 0, tzinfo=tz)
+
+    return patch("services.consulta_service.datetime", RelojFijo)
 
 
 class TestDetectarConsulta:
@@ -106,19 +116,51 @@ class TestDetectarConsulta:
 
 
 class TestFiltrarPorPeriodo:
-    def setup_method(self) -> None:
-        self.rows = [
-            ["2026-10-15", "-5000", "comida", "almuerzo", "506..."],
-            ["2026-10-10", "-3000", "transporte", "bus", "506..."],
-            ["2026-09-20", "-8000", "comida", "cena", "506..."],
+    def test_semana_actual_incluye_lunes_y_excluye_domingo_anterior(self) -> None:
+        filas = [
+            ["2026-10-11", "-1000", "comida", "domingo anterior", "506..."],
+            ["2026-10-12", "-2000", "comida", "lunes", "506..."],
         ]
+        with _reloj_fijo(2026, 10, 15):
+            filtradas = _filtrar_por_periodo(filas, "semana")
+        assert [fila[0] for fila in filtradas] == ["2026-10-12"]
 
-    def test_semana_actual(self) -> None:
-        with patch("services.consulta_service.datetime") as mock_dt:
-            mock_dt.now.return_value = pytest.approx(2026, 10, 16)
-            mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
-            # This is complex with mocking datetime; skip deep test
-            pass
+    def test_semana_pasada_termina_el_domingo_anterior(self) -> None:
+        filas = [
+            ["2026-10-11", "-1000", "comida", "domingo anterior", "506..."],
+            ["2026-10-12", "-2000", "comida", "lunes actual", "506..."],
+        ]
+        with _reloj_fijo(2026, 10, 15):
+            filtradas = _filtrar_por_periodo(filas, "semana_pasada")
+        assert [fila[0] for fila in filtradas] == ["2026-10-11"]
+
+    def test_semana_que_cruza_de_mes_usa_el_lunes(self) -> None:
+        filas = [
+            ["2026-10-25", "-1000", "comida", "domingo anterior", "506..."],
+            ["2026-10-26", "-2000", "comida", "lunes de la semana", "506..."],
+            ["2026-11-01", "-3000", "comida", "domingo actual", "506..."],
+        ]
+        with _reloj_fijo(2026, 11, 1):
+            filtradas = _filtrar_por_periodo(filas, "semana")
+        assert [fila[0] for fila in filtradas] == ["2026-10-26", "2026-11-01"]
+
+    def test_mes_actual_incluye_dia_1_y_excluye_mes_anterior(self) -> None:
+        filas = [
+            ["2026-10-31", "-1000", "comida", "ultimo dia anterior", "506..."],
+            ["2026-11-01", "-2000", "comida", "primer dia actual", "506..."],
+        ]
+        with _reloj_fijo(2026, 11, 15):
+            filtradas = _filtrar_por_periodo(filas, "mes")
+        assert [fila[0] for fila in filtradas] == ["2026-11-01"]
+
+    def test_mes_pasado_incluye_octubre_y_excluye_noviembre(self) -> None:
+        filas = [
+            ["2026-10-31", "-1000", "comida", "ultimo dia anterior", "506..."],
+            ["2026-11-01", "-2000", "comida", "primer dia actual", "506..."],
+        ]
+        with _reloj_fijo(2026, 11, 15):
+            filtradas = _filtrar_por_periodo(filas, "mes_pasado")
+        assert [fila[0] for fila in filtradas] == ["2026-10-31"]
 
     def test_parse_fecha(self) -> None:
         assert _parse_fecha("2026-10-15") == datetime(2026, 10, 15)
@@ -170,10 +212,14 @@ class TestConsultaPipeline:
             ["2026-10-15", "-5000", "comida", "almuerzo", "506..."],
             ["2026-10-14", "-3000", "transporte", "bus", "506..."],
             ["2026-10-13", "-2000", "comida", "cena", "506..."],
+            ["2026-10-11", "-9000", "comida", "domingo anterior", "506..."],
         ]
-        with patch(
-            "services.consulta_service.obtener_transacciones_cliente", new_callable=AsyncMock
-        ) as mock:
+        with (
+            _reloj_fijo(2026, 10, 15),
+            patch(
+                "services.consulta_service.obtener_transacciones_cliente", new_callable=AsyncMock
+            ) as mock,
+        ):
             mock.return_value = mock_rows
             consulta = ConsultaCategoria(categoria="comida", periodo="semana")
             res = await calcular_consulta_categoria("50660646370", consulta)
@@ -187,10 +233,14 @@ class TestConsultaPipeline:
             ["2026-10-15", "-5000", "comida", "almuerzo", "506..."],
             ["2026-10-14", "-12000", "transporte", "taxi", "506..."],
             ["2026-10-13", "-2000", "comida", "cena", "506..."],
+            ["2026-10-11", "-20000", "comida", "domingo anterior", "506..."],
         ]
-        with patch(
-            "services.consulta_service.obtener_transacciones_cliente", new_callable=AsyncMock
-        ) as mock:
+        with (
+            _reloj_fijo(2026, 10, 15),
+            patch(
+                "services.consulta_service.obtener_transacciones_cliente", new_callable=AsyncMock
+            ) as mock,
+        ):
             mock.return_value = mock_rows
             consulta = ConsultaMayor(periodo="semana")
             res = await calcular_consulta_mayor("50660646370", consulta)
@@ -200,24 +250,18 @@ class TestConsultaPipeline:
 
     @pytest.mark.anyio
     async def test_consulta_comparacion(self) -> None:
-        # Usa fechas relativas a hoy para que caigan en semanas reales
-        from datetime import datetime, timedelta
-
-        hoy = datetime.now()
-        inicio_semana = hoy - timedelta(days=hoy.weekday())
-        inicio_semana_pasada = inicio_semana - timedelta(days=7)
-        f1 = (inicio_semana + timedelta(days=2)).strftime("%Y-%m-%d")  # esta semana
-        f2 = (inicio_semana_pasada + timedelta(days=1)).strftime("%Y-%m-%d")  # semana pasada
-
         mock_rows = [
-            [f1, "-5000", "comida", "almuerzo", "506..."],
-            [f1, "-3000", "transporte", "bus", "506..."],
-            [f2, "-8000", "comida", "cena", "506..."],
-            [f2, "-4000", "transporte", "uber", "506..."],
+            ["2026-10-15", "-5000", "comida", "almuerzo", "506..."],
+            ["2026-10-14", "-3000", "transporte", "bus", "506..."],
+            ["2026-10-08", "-8000", "comida", "cena", "506..."],
+            ["2026-10-07", "-4000", "transporte", "uber", "506..."],
         ]
-        with patch(
-            "services.consulta_service.obtener_transacciones_cliente", new_callable=AsyncMock
-        ) as mock:
+        with (
+            _reloj_fijo(2026, 10, 15),
+            patch(
+                "services.consulta_service.obtener_transacciones_cliente", new_callable=AsyncMock
+            ) as mock,
+        ):
             mock.return_value = mock_rows
             consulta = ConsultaComparacion(periodo_base="semana")
             res = await calcular_consulta_comparacion("50660646370", consulta)

@@ -93,6 +93,11 @@ from workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
+TEXTO_ERROR_GUARDADO = (
+    "No pude guardar el movimiento en tu hoja. No quedó registrado. "
+    "Intentá de nuevo en unos segundos."
+)
+
 
 # ==========================================
 # 8.6.2 — IDEMPOTENCIA ANTI-DOBLE-TAP (helpers)
@@ -208,6 +213,20 @@ async def _es_duplicado(
     return es_mismo_mismo_momento(
         previo.get("hash"), previo.get("ts"), hash_transaccion(transaction_data), int(time.time())
     )
+
+
+async def _guardar_transaccion_o_avisar(
+    transaction_data: dict[str, Any], sender_phone: str
+) -> bool:
+    guardado = await append_transaction_to_sheet(transaction_data, sender_phone)
+    if guardado:
+        return True
+    logger.error(
+        "Sheets: no se pudo guardar la transacción de %s; no se confirma ni se marca dedupe.",
+        sender_phone,
+    )
+    await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_ERROR_GUARDADO)
+    return False
 
 
 def _formatear_movimiento(fila: list[str]) -> str:
@@ -415,8 +434,9 @@ async def _procesar_pipeline(
     if pendiente is not None:
         decision = detectar_confirmacion_duplicado(transcripcion)
         if decision == "otro":
+            if not await _guardar_transaccion_o_avisar(pendiente, sender_phone):
+                return file_path or ""
             await _borrar_pendiente(sender_phone)
-            await append_transaction_to_sheet(pendiente, sender_phone)
             await _marcar_ultimo_registro(sender_phone, pendiente, None)
             await enviar_mensaje_whatsapp(
                 to_phone=sender_phone,
@@ -511,10 +531,12 @@ async def _procesar_pipeline(
             )
             return file_path or ""
 
-        await append_transaction_to_sheet(transaction_data, sender_phone)
+        if not await _guardar_transaccion_o_avisar(transaction_data, sender_phone):
+            return file_path or ""
         await _marcar_ultimo_registro(sender_phone, transaction_data, media_id)
     else:
-        await append_transaction_to_sheet(transaction_data, sender_phone)
+        if not await _guardar_transaccion_o_avisar(transaction_data, sender_phone):
+            return file_path or ""
 
     await enviar_mensaje_whatsapp(
         to_phone=sender_phone,
