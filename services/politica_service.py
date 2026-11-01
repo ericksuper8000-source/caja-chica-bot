@@ -64,6 +64,7 @@ def _normalizar(texto: str) -> str:
     texto = re.sub(r"[íìïî]", "i", texto)
     texto = re.sub(r"[óòöô]", "o", texto)
     texto = re.sub(r"[úùüû]", "u", texto)
+    texto = re.sub(r"[ñ]", "n", texto)
     return " ".join(texto.split())
 
 
