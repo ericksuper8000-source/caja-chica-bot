@@ -175,6 +175,9 @@ def test_detectar_contexto() -> None:
     mexico = detectar_contexto("México")
     assert mexico is not None
     assert mexico["moneda"] == "MXN"
+    espana = detectar_contexto("España")
+    assert espana is not None
+    assert espana["moneda"] == "EUR"
     assert detectar_contexto("no sé") is None
     assert detectar_contexto("") is None
 
