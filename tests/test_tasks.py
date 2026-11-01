@@ -10,6 +10,8 @@ from services.duplicado_service import (
     TEXTO_CONFIRMACION_DUPLICADO,
     TEXTO_DUPLICADO_CONFIRMADO,
     TEXTO_DUPLICADO_DESCARTADO,
+    clave_pendiente,
+    clave_ultimo,
 )
 from services.politica_service import POLITICA_VERSION
 
@@ -368,7 +370,10 @@ def _entrada_registro(monto: int, categoria: str, detalle: str) -> dict[str, obj
 
 
 def _contexto_8_6_2(
-    redis_falso: _FakeRedis, parse_result: object, transcripcion: str | None = None
+    redis_falso: _FakeRedis,
+    parse_result: object,
+    transcripcion: str | None = None,
+    sheet_side_effect: list[object] | None = None,
 ):
     """
     Patches del pipeline para las pruebas de 8.6.2. Usa ExitStack para no depender del
@@ -377,9 +382,18 @@ def _contexto_8_6_2(
     el canal de audio, que pasa por Whisper.
     """
     stack = ExitStack()
+    if sheet_side_effect is None:
+        sheet = stack.enter_context(patch("workers.tasks.append_transaction_to_sheet"))
+    else:
+        sheet = stack.enter_context(
+            patch(
+                "workers.tasks.append_transaction_to_sheet",
+                new=AsyncMock(side_effect=sheet_side_effect),
+            )
+        )
     mocks = {
         "wa": stack.enter_context(patch("workers.tasks.enviar_mensaje_whatsapp")),
-        "sheet": stack.enter_context(patch("workers.tasks.append_transaction_to_sheet")),
+        "sheet": sheet,
         "redis": stack.enter_context(
             patch("workers.tasks._dedupe_redis", new=AsyncMock(return_value=redis_falso))
         ),
@@ -643,3 +657,67 @@ def test_8_6_2_sin_pendiente_no_intercepta() -> None:
             "No encontré datos financieros en tu mensaje. Intentá de nuevo "
             "indicando monto, categoría y si es gasto o ingreso."
         )
+
+
+# ==========================================
+# P0-1 — Confirmación y dedupe dependientes del guardado real
+# ==========================================
+
+
+def test_p0_1_si_sheets_falla_no_confirma_ni_marca_dedupe() -> None:
+    redis_falso = _FakeRedis()
+    datos = _entrada_registro(1500, "Alimentación", "sándwich")
+    stack, m = _contexto_8_6_2(redis_falso, datos, sheet_side_effect=[False])
+
+    with stack:
+        from workers.tasks import TEXTO_ERROR_GUARDADO, procesar_mensaje_texto_task
+
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+
+        assert m["sheet"].await_count == 1
+        m["wa"].assert_awaited_once_with(to_phone="50688888888", mensaje=TEXTO_ERROR_GUARDADO)
+        assert clave_ultimo("50688888888") not in redis_falso.store
+
+
+def test_p0_1_reintento_tras_fallo_si_guarda_y_marca() -> None:
+    redis_falso = _FakeRedis()
+    datos = _entrada_registro(1500, "Alimentación", "sándwich")
+    stack, m = _contexto_8_6_2(redis_falso, datos, sheet_side_effect=[False, True])
+
+    with stack:
+        from workers.tasks import TEXTO_ERROR_GUARDADO, procesar_mensaje_texto_task
+
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] == TEXTO_ERROR_GUARDADO
+        assert clave_ultimo("50688888888") not in redis_falso.store
+
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        assert m["sheet"].await_count == 2
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] == (
+            "Transacción registrada: Alimentación - ₡1500"
+        )
+        assert clave_ultimo("50688888888") in redis_falso.store
+
+
+def test_p0_1_duplicado_confirmado_con_fallo_conserva_pendiente() -> None:
+    redis_falso = _FakeRedis()
+    datos = _entrada_registro(1500, "Alimentación", "sándwich")
+    stack, m = _contexto_8_6_2(redis_falso, datos, sheet_side_effect=[True, False, True])
+
+    with stack:
+        from workers.tasks import TEXTO_ERROR_GUARDADO, procesar_mensaje_texto_task
+
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
+        assert clave_pendiente("50688888888") in redis_falso.store
+
+        procesar_mensaje_texto_task("50688888888", "sí")
+        assert m["sheet"].await_count == 2
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] == TEXTO_ERROR_GUARDADO
+        assert clave_pendiente("50688888888") in redis_falso.store
+
+        procesar_mensaje_texto_task("50688888888", "sí")
+        assert m["sheet"].await_count == 3
+        assert m["wa"].call_args_list[-1].kwargs["mensaje"] == TEXTO_DUPLICADO_CONFIRMADO
+        assert clave_pendiente("50688888888") not in redis_falso.store
+        assert clave_ultimo("50688888888") in redis_falso.store
