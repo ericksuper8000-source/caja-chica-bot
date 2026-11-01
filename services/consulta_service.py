@@ -297,7 +297,9 @@ async def detectar_consulta(
 
 
 def _parse_fecha(fecha_str: str) -> datetime | None:
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+    # Producción guarda "YYYY-MM-DD HH:MM:SS" (append_transaction_to_sheet);
+    # los tests usan fecha sola, por eso se aceptan ambos.
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
         try:
             return datetime.strptime(fecha_str.strip(), fmt)
         except ValueError:
