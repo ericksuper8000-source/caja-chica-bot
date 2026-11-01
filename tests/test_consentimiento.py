@@ -5,6 +5,7 @@ import gspread
 import pytest
 
 from app.core.utils import extraer_datos_texto
+from services.onboarding_service import TEXTO_ONBOARDING_TIPO_USO
 from services.politica_service import (
     POLITICA_VERSION,
     TEXTO_ACEPTACION_CONFIRMADA,
@@ -308,7 +309,9 @@ async def test_pipeline_acepta_consentimiento() -> None:
 
     assert result == ""
     mock_registrar.assert_called_once_with("50688888888", "aceptado")
-    mock_whatsapp.assert_called_once()
+    assert mock_whatsapp.call_count == 2
+    mock_whatsapp.assert_any_call(to_phone="50688888888", mensaje=TEXTO_ACEPTACION_CONFIRMADA)
+    mock_whatsapp.assert_any_call(to_phone="50688888888", mensaje=TEXTO_ONBOARDING_TIPO_USO)
     mock_parser.assert_not_called()
     mock_sheet.assert_not_called()
 
@@ -375,7 +378,9 @@ def test_procesar_mensaje_texto_task_despacha_pipeline() -> None:
 
     assert resultado == ""
     mock_registrar.assert_called_once_with("50688888888", "aceptado")
-    mock_whatsapp.assert_called_once()
+    assert mock_whatsapp.call_count == 2
+    mock_whatsapp.assert_any_call(to_phone="50688888888", mensaje=TEXTO_ACEPTACION_CONFIRMADA)
+    mock_whatsapp.assert_any_call(to_phone="50688888888", mensaje=TEXTO_ONBOARDING_TIPO_USO)
 
 
 @pytest.mark.anyio
@@ -442,9 +447,8 @@ async def test_pipeline_aceptacion_limpia_sigue_registrando() -> None:
     mock_registrar.assert_called_once_with("50688888888", "aceptado")
     mock_parser.assert_not_called()
     mock_sheet.assert_not_called()
-    mock_whatsapp.assert_called_once_with(
-        to_phone="50688888888", mensaje=TEXTO_ACEPTACION_CONFIRMADA
-    )
+    mock_whatsapp.assert_any_call(to_phone="50688888888", mensaje=TEXTO_ACEPTACION_CONFIRMADA)
+    mock_whatsapp.assert_any_call(to_phone="50688888888", mensaje=TEXTO_ONBOARDING_TIPO_USO)
 
 
 # ==========================================
@@ -624,6 +628,8 @@ async def test_pipeline_version_anterior_acepta_vigente() -> None:
 
     assert result == ""
     mock_registrar.assert_called_once_with("50688888888", "aceptado")
-    mock_whatsapp.assert_called_once()
+    assert mock_whatsapp.call_count == 2
+    mock_whatsapp.assert_any_call(to_phone="50688888888", mensaje=TEXTO_ACEPTACION_CONFIRMADA)
+    mock_whatsapp.assert_any_call(to_phone="50688888888", mensaje=TEXTO_ONBOARDING_TIPO_USO)
     mock_parser.assert_not_called()
     mock_sheet.assert_not_called()

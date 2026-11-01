@@ -5,10 +5,13 @@ import pytest
 from gspread.utils import ValueInputOption
 
 from services.sheets_service import (
+    USUARIOS_HEADERS,
     append_transaction_to_sheet,
     get_sheets_client,
     obtener_transacciones_cliente,
+    obtener_usuario,
     update_last_transaction_to_sheet,
+    upsert_usuario,
 )
 
 
@@ -423,3 +426,106 @@ async def test_append_transaction_api_error(mock_get_sheets_client):
 
     # El servicio debe capturar el error y retornar False en lugar de tirar un crash
     assert result is False
+
+
+@patch("services.sheets_service.get_sheets_client")
+async def test_upsert_usuario_crea_fila(mock_get_sheets_client):
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+    mock_worksheet.col_values.return_value = ["telefono"]
+
+    result = await upsert_usuario(
+        {
+            "telefono": "50688888888",
+            "tipo_uso": "negocio",
+            "espacio": "Mi Tienda",
+            "pais": "Costa Rica",
+            "moneda": "CRC",
+            "zona": "America/Costa_Rica",
+            "categorias": "Ventas, Otros",
+        }
+    )
+
+    assert result is True
+    fila = mock_worksheet.append_row.call_args.args[0]
+    assert fila[0] == "50688888888"
+    assert fila[1] == ""
+    assert fila[2] == "negocio"
+    assert fila[3] == "Mi Tienda"
+    assert fila[4] == "Costa Rica"
+    assert fila[5] == "CRC"
+    assert fila[6] == "America/Costa_Rica"
+    assert fila[7] == "Ventas, Otros"
+    assert fila[8]
+    mock_worksheet.update.assert_not_called()
+
+
+@patch("services.sheets_service.get_sheets_client")
+async def test_upsert_usuario_actualiza_fila_existente(mock_get_sheets_client):
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+    mock_worksheet.col_values.return_value = ["telefono", "50688888888"]
+
+    result = await upsert_usuario({"telefono": "50688888888", "espacio": "Nuevo Nombre"})
+
+    assert result is True
+    rango, filas = mock_worksheet.update.call_args.args
+    assert rango == "A2:I2"
+    assert filas[0][0] == "50688888888"
+    assert filas[0][3] == "Nuevo Nombre"
+    mock_worksheet.append_row.assert_not_called()
+
+
+async def test_upsert_usuario_sin_telefono():
+    assert await upsert_usuario({"tipo_uso": "personal"}) is False
+
+
+@patch("services.sheets_service.get_sheets_client")
+async def test_obtener_usuario_existente(mock_get_sheets_client):
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+    mock_worksheet.col_values.return_value = ["telefono", "50688888888"]
+    mock_worksheet.row_values.return_value = [
+        "50688888888",
+        "",
+        "negocio",
+        "Mi Tienda",
+        "Costa Rica",
+        "CRC",
+        "America/Costa_Rica",
+        "Ventas, Otros",
+        "2026-11-01 10:00:00",
+    ]
+
+    usuario = await obtener_usuario("50688888888")
+
+    assert usuario is not None
+    assert usuario["telefono"] == "50688888888"
+    assert usuario["espacio"] == "Mi Tienda"
+    assert usuario["categorias"] == "Ventas, Otros"
+    assert list(usuario.keys()) == USUARIOS_HEADERS
+
+
+@patch("services.sheets_service.get_sheets_client")
+async def test_obtener_usuario_inexistente(mock_get_sheets_client):
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+    mock_worksheet.col_values.return_value = ["telefono"]
+
+    assert await obtener_usuario("50699999999") is None
