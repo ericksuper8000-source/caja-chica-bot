@@ -418,3 +418,179 @@ async def obtener_suscripcion(sender_phone: str) -> dict[str, Any] | None:
     except Exception as e:
         logger.error(f"Error inesperado al leer suscripción: {e}")
         return None
+
+
+# ==========================================
+# FASE 6.1 - USUARIOS (ADR-0019): perfil persistente del alta guiada
+# ==========================================
+# La pestaña `Usuarios` es la persistencia real del onboarding. El estado en Redis
+# (services/onboarding_service.py) es solo temporal (TTL 24h); al cerrar el alta se
+# escribe/actualiza la fila del teléfono aquí.
+USUARIOS_TAB_NAME = "Usuarios"
+USUARIOS_HEADERS = [
+    "telefono",
+    "nombre",
+    "tipo_uso",
+    "espacio",
+    "pais",
+    "moneda",
+    "zona",
+    "categorias",
+    "fecha_registro",
+]
+
+
+def _sync_get_usuarios_worksheet(spreadsheet_id: str) -> Any:
+    """Devuelve la pestaña de usuarios, creándola con encabezados si no existe."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    try:
+        worksheet = spreadsheet.worksheet(USUARIOS_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=USUARIOS_TAB_NAME, rows=100, cols=12)
+        worksheet.append_row(
+            USUARIOS_HEADERS,
+            value_input_option=ValueInputOption.user_entered,
+        )
+    return worksheet
+
+
+def _sync_upsert_usuario(spreadsheet_id: str, datos: dict[str, Any]) -> bool:
+    """Inserta o actualiza la fila del usuario (columna A = teléfono)."""
+    worksheet = _sync_get_usuarios_worksheet(spreadsheet_id)
+    telefono = str(datos.get("telefono", ""))
+    fila = [str(datos.get(columna, "")) for columna in USUARIOS_HEADERS]
+    phones = worksheet.col_values(1)
+    matches = [i for i, phone in enumerate(phones, start=1) if phone == telefono]
+    if matches:
+        numero_fila = matches[-1]
+        worksheet.update(
+            f"A{numero_fila}:I{numero_fila}",
+            [fila],
+            value_input_option=ValueInputOption.user_entered,
+        )
+    else:
+        worksheet.append_row(fila, value_input_option=ValueInputOption.user_entered)
+    return True
+
+
+async def upsert_usuario(datos: dict[str, Any]) -> bool:
+    """
+    Guarda el perfil del usuario en la pestaña `Usuarios` (Fase 6.1): crea la fila si
+    no existe o la actualiza. Agrega `fecha_registro` si no viene. Nunca levanta
+    excepción: devuelve False y deja log si Sheets falla (el flujo del bot continúa).
+    """
+    telefono = str(datos.get("telefono", ""))
+    if not telefono:
+        return False
+    payload = dict(datos)
+    if not payload.get("fecha_registro"):
+        payload["fecha_registro"] = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(_sync_upsert_usuario, spreadsheet_id, payload)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al guardar usuario: {error}")
+        return False
+    except Exception as e:
+        logger.error(f"Error inesperado al guardar usuario: {e}")
+        return False
+
+
+def _sync_read_usuario(spreadsheet_id: str, sender_phone: str) -> dict[str, Any] | None:
+    """Lee la fila del usuario por teléfono y la devuelve como dict o None."""
+    worksheet = _sync_get_usuarios_worksheet(spreadsheet_id)
+    phones = worksheet.col_values(1)
+    matches = [i for i, phone in enumerate(phones, start=1) if phone == sender_phone]
+    if not matches:
+        return None
+    values = list(worksheet.row_values(matches[-1]))
+    if len(values) < len(USUARIOS_HEADERS):
+        values += [""] * (len(USUARIOS_HEADERS) - len(values))
+    return dict(zip(USUARIOS_HEADERS, values, strict=False))
+
+
+async def obtener_usuario(sender_phone: str) -> dict[str, Any] | None:
+    """
+    Consulta el perfil del usuario en la pestaña `Usuarios` (Fase 6.1). Devuelve None
+    si no existe o si Sheets falla.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(_sync_read_usuario, spreadsheet_id, sender_phone)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al leer usuario: {error}")
+        return None
+    except Exception as e:
+        logger.error(f"Error inesperado al leer usuario: {e}")
+        return None
+
+
+def _sync_actualizar_telefono_usuario(
+    spreadsheet_id: str, telefono_anterior: str, telefono_nuevo: str
+) -> bool:
+    """Mueve la fila del usuario al número nuevo (spec 5.6)."""
+    worksheet = _sync_get_usuarios_worksheet(spreadsheet_id)
+    phones = worksheet.col_values(1)
+    if telefono_nuevo in phones:
+        return False
+    matches = [i for i, phone in enumerate(phones, start=1) if phone == telefono_anterior]
+    if not matches:
+        return False
+    worksheet.update_cell(matches[-1], 1, telefono_nuevo)
+    return True
+
+
+async def actualizar_telefono_usuario(telefono_anterior: str, telefono_nuevo: str) -> bool:
+    """Actualiza el teléfono del perfil en `Usuarios` (Fase 6.1, cambio de número)."""
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_actualizar_telefono_usuario,
+            spreadsheet_id,
+            telefono_anterior,
+            telefono_nuevo,
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al cambiar teléfono: {error}")
+        return False
+    except Exception as e:
+        logger.error(f"Error inesperado al cambiar teléfono: {e}")
+        return False
+
+
+def _sync_renombrar_pestana_cliente(
+    spreadsheet_id: str, telefono_anterior: str, telefono_nuevo: str
+) -> bool:
+    """Renombra la pestaña de transacciones del cliente (spec 5.6)."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    try:
+        spreadsheet.worksheet(telefono_nuevo)
+        return False
+    except gspread.exceptions.WorksheetNotFound:
+        pass
+    try:
+        worksheet = spreadsheet.worksheet(telefono_anterior)
+    except gspread.exceptions.WorksheetNotFound:
+        return True
+    worksheet.update_title(telefono_nuevo)
+    return True
+
+
+async def renombrar_pestana_cliente(telefono_anterior: str, telefono_nuevo: str) -> bool:
+    """Renombra la pestaña del cliente para conservar su historial (spec 5.6)."""
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_renombrar_pestana_cliente,
+            spreadsheet_id,
+            telefono_anterior,
+            telefono_nuevo,
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al renombrar pestaña: {error}")
+        return False
+    except Exception as e:
+        logger.error(f"Error inesperado al renombrar pestaña: {e}")
+        return False

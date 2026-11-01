@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 import asyncio
 import json
 import logging
@@ -40,6 +40,46 @@ from services.duplicado_service import (
     es_mismo_reenvio,
     hash_transaccion,
 )
+from services.numero_service import (
+    TEXTO_CAMBIO_NUMERO_CONFIRMADO,
+    TEXTO_CAMBIO_NUMERO_ERROR,
+    TEXTO_CAMBIO_NUMERO_INICIO,
+    TEXTO_CAMBIO_NUMERO_INVALIDO,
+    TEXTO_CAMBIO_NUMERO_SIN_ACCESO,
+    crear_codigo_cambio,
+    detectar_confirmacion_cambio_numero,
+    detectar_inicio_cambio_numero,
+    detectar_recuperacion_manual,
+    verificar_codigo_cambio,
+)
+from services.onboarding_service import (
+    PASO_CATEGORIAS,
+    PASO_COMPLETADO,
+    PASO_CONTEXTO,
+    PASO_ESPACIO,
+    PASO_PRIMER_MOVIMIENTO,
+    PASO_TIPO_USO,
+    TEXTO_ONBOARDING_CATEGORIAS_CONFIRMADO,
+    TEXTO_ONBOARDING_CATEGORIAS_REINTENTO,
+    TEXTO_ONBOARDING_CONTEXTO,
+    TEXTO_ONBOARDING_CONTEXTO_CONFIRMADO,
+    TEXTO_ONBOARDING_CONTEXTO_REINTENTO,
+    TEXTO_ONBOARDING_ESPACIO,
+    TEXTO_ONBOARDING_ESPACIO_REINTENTO,
+    TEXTO_ONBOARDING_PRIMER_MOVIMIENTO,
+    TEXTO_ONBOARDING_TIPO_USO,
+    TEXTO_ONBOARDING_TIPO_USO_REINTENTO,
+    detectar_contexto,
+    detectar_nombre_espacio,
+    detectar_saltar_primer_movimiento,
+    detectar_tipo_uso,
+    formatear_pregunta_categorias,
+    guardar_paso,
+    obtener_paso,
+    parece_movimiento,
+    procesar_categorias,
+    texto_resumen_onboarding,
+)
 from services.openai_service import (
     parse_financial_text,
     transcribir_audio_whisper,
@@ -73,12 +113,15 @@ from services.reporte_service import (
     texto_sin_movimientos,
 )
 from services.sheets_service import (
+    actualizar_telefono_usuario,
     append_transaction_to_sheet,
     obtener_consentimiento,
     obtener_suscripcion,
     obtener_transacciones_cliente,
     registrar_consentimiento,
+    renombrar_pestana_cliente,
     update_last_transaction_to_sheet,
+    upsert_usuario,
 )
 from services.suscripcion_service import (
     mensaje_suscripcion_no_activa,
@@ -320,6 +363,119 @@ async def _procesar_presupuesto(sender_phone: str, transcripcion: str) -> bool:
     return False
 
 
+# ==========================================
+# Fase 6.1 - Onboarding guiado (ADR-0019 / especificacion A04-A05)
+# ==========================================
+async def _iniciar_onboarding(sender_phone: str) -> None:
+    # Fase 6.1 - Onboarding guiado: tras aceptar la politica arranca el alta guiada.
+    await guardar_paso(sender_phone, PASO_TIPO_USO)
+    await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_ONBOARDING_TIPO_USO)
+
+
+async def _responder_paso_onboarding(sender_phone: str, texto: str) -> str | None:
+    # Fase 6.1 - Onboarding guiado: responde al paso actual del alta. None si no aplica.
+    estado = await obtener_paso(sender_phone)
+    paso = estado.get("paso") if estado else None
+    if paso == PASO_TIPO_USO:
+        tipo_uso = detectar_tipo_uso(texto)
+        if tipo_uso is None:
+            if detectar_respuesta_exportacion_baja(texto) is not None:
+                return None
+            if parece_movimiento(texto):
+                return None
+            return TEXTO_ONBOARDING_TIPO_USO_REINTENTO
+        await guardar_paso(sender_phone, PASO_ESPACIO, tipo_uso=tipo_uso)
+        return TEXTO_ONBOARDING_ESPACIO
+
+    if paso == PASO_ESPACIO:
+        if detectar_respuesta_exportacion_baja(texto) is not None:
+            return None
+        if parece_movimiento(texto):
+            return None
+        nombre = detectar_nombre_espacio(texto)
+        if nombre is None:
+            return TEXTO_ONBOARDING_ESPACIO_REINTENTO
+        datos_previos = {k: v for k, v in (estado or {}).items() if k != "paso"}
+        await guardar_paso(sender_phone, PASO_CONTEXTO, espacio=nombre, **datos_previos)
+        return TEXTO_ONBOARDING_CONTEXTO.format(espacio=nombre)
+
+    if paso == PASO_CONTEXTO:
+        if detectar_respuesta_exportacion_baja(texto) is not None:
+            return None
+        if parece_movimiento(texto):
+            return None
+        contexto = detectar_contexto(texto)
+        if contexto is None:
+            return TEXTO_ONBOARDING_CONTEXTO_REINTENTO
+        datos_previos = {k: v for k, v in (estado or {}).items() if k != "paso"}
+        await guardar_paso(sender_phone, PASO_CATEGORIAS, **contexto, **datos_previos)
+        tipo_uso = str((estado or {}).get("tipo_uso", "personal"))
+        return (
+            TEXTO_ONBOARDING_CONTEXTO_CONFIRMADO.format(**contexto)
+            + "\n\n"
+            + formatear_pregunta_categorias(tipo_uso)
+        )
+
+    if paso == PASO_CATEGORIAS:
+        if detectar_respuesta_exportacion_baja(texto) is not None:
+            return None
+        if parece_movimiento(texto):
+            return None
+        tipo_uso = str((estado or {}).get("tipo_uso", "personal"))
+        categorias = procesar_categorias(texto, tipo_uso)
+        if categorias is None:
+            return TEXTO_ONBOARDING_CATEGORIAS_REINTENTO
+        datos_previos = {k: v for k, v in (estado or {}).items() if k != "paso"}
+        texto_categorias = ", ".join(categorias)
+        await guardar_paso(
+            sender_phone, PASO_PRIMER_MOVIMIENTO, categorias=texto_categorias, **datos_previos
+        )
+        return (
+            TEXTO_ONBOARDING_CATEGORIAS_CONFIRMADO.format(categorias=texto_categorias)
+            + "\n\n"
+            + TEXTO_ONBOARDING_PRIMER_MOVIMIENTO
+        )
+
+    if paso == PASO_PRIMER_MOVIMIENTO:
+        if detectar_respuesta_exportacion_baja(texto) is not None:
+            return None
+        if not detectar_saltar_primer_movimiento(texto):
+            return None
+        datos_previos = {k: v for k, v in (estado or {}).items() if k != "paso"}
+        await guardar_paso(sender_phone, PASO_COMPLETADO, **datos_previos)
+        await _persistir_usuario(sender_phone, estado or {})
+        return texto_resumen_onboarding(estado or {})
+
+    return None
+
+
+async def _persistir_usuario(sender_phone: str, estado: dict[str, Any]) -> None:
+    # Fase 6.1 - persistencia real del perfil al cerrar el alta (pestaña Usuarios).
+    await upsert_usuario(
+        {
+            "telefono": sender_phone,
+            "tipo_uso": str(estado.get("tipo_uso", "")),
+            "espacio": str(estado.get("espacio", "")),
+            "pais": str(estado.get("pais", "Costa Rica")),
+            "moneda": str(estado.get("moneda", "CRC")),
+            "zona": str(estado.get("zona", "America/Costa_Rica")),
+            "categorias": str(estado.get("categorias", "")),
+        }
+    )
+
+
+async def _finalizar_onboarding_si_corresponde(
+    sender_phone: str, transaction_data: dict[str, Any]
+) -> str | None:
+    estado = await obtener_paso(sender_phone)
+    if not estado or estado.get("paso") != PASO_PRIMER_MOVIMIENTO:
+        return None
+    datos_previos = {k: v for k, v in estado.items() if k != "paso"}
+    await guardar_paso(sender_phone, PASO_COMPLETADO, **datos_previos)
+    await _persistir_usuario(sender_phone, estado)
+    return texto_resumen_onboarding(estado, transaction_data)
+
+
 async def _procesar_pipeline(
     file_path: str | None, sender_phone: str, texto_entrante: str | None = None
 ) -> str:
@@ -337,6 +493,28 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
+    # 1.5 Fase 6.1 - Cambio de número (spec 5.6): la confirmación llega desde el número
+    #     nuevo, que todavía no tiene consentimiento, por eso va antes del gate legal.
+    confirmacion_cambio = detectar_confirmacion_cambio_numero(transcripcion)
+    if confirmacion_cambio is not None:
+        telefono_anterior, codigo_cambio = confirmacion_cambio
+        if telefono_anterior != sender_phone and await verificar_codigo_cambio(
+            telefono_anterior, codigo_cambio
+        ):
+            consentimiento_previo = await obtener_consentimiento(telefono_anterior)
+            if consentimiento_previo and consentimiento_previo.get("estado"):
+                await registrar_consentimiento(sender_phone, str(consentimiento_previo["estado"]))
+            await actualizar_telefono_usuario(telefono_anterior, sender_phone)
+            await renombrar_pestana_cliente(telefono_anterior, sender_phone)
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone, mensaje=TEXTO_CAMBIO_NUMERO_CONFIRMADO
+            )
+        else:
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone, mensaje=TEXTO_CAMBIO_NUMERO_INVALIDO
+            )
+        return file_path or ""
+
     # 2. GATE 6.5.1/6.5.6 — Consentimiento (ADR-0011, Ley 8968): sin aceptación de la
     #    versión vigente no se procesa nada
     consentimiento = await obtener_consentimiento(sender_phone)
@@ -351,6 +529,7 @@ async def _procesar_pipeline(
                 to_phone=sender_phone,
                 mensaje=TEXTO_ACEPTACION_CONFIRMADA,
             )
+            await _iniciar_onboarding(sender_phone)
             return file_path or ""
 
         if respuesta == "rechazar":
@@ -377,7 +556,29 @@ async def _procesar_pipeline(
             )
         return file_path or ""
 
+    # 2.5 Fase 6.1 - Cambio de número (spec 5.6): inicio desde el número actual
+    if detectar_recuperacion_manual(transcripcion):
+        logger.warning("cambio_numero: recuperación manual solicitada por %s", sender_phone)
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_CAMBIO_NUMERO_SIN_ACCESO)
+        return file_path or ""
+
+    if detectar_inicio_cambio_numero(transcripcion):
+        codigo_nuevo = await crear_codigo_cambio(sender_phone)
+        mensaje_cambio = (
+            TEXTO_CAMBIO_NUMERO_INICIO.format(telefono=sender_phone, codigo=codigo_nuevo)
+            if codigo_nuevo
+            else TEXTO_CAMBIO_NUMERO_ERROR
+        )
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=mensaje_cambio)
+        return file_path or ""
+
     # 3. Fase 6.5.3 — Derechos ARCO (Ley 8968): "exporta mis datos" / "darme de baja"
+    # Fase 6.1 - Onboarding guiado: respuesta al paso actual del alta
+    mensaje_onboarding = await _responder_paso_onboarding(sender_phone, transcripcion)
+    if mensaje_onboarding is not None:
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=mensaje_onboarding)
+        return file_path or ""
+
     respuesta_arco = detectar_respuesta_exportacion_baja(transcripcion)
 
     if respuesta_arco == "exportar":
@@ -537,6 +738,11 @@ async def _procesar_pipeline(
     else:
         if not await _guardar_transaccion_o_avisar(transaction_data, sender_phone):
             return file_path or ""
+
+    resumen = await _finalizar_onboarding_si_corresponde(sender_phone, transaction_data)
+    if resumen is not None:
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=resumen)
+        return file_path or ""
 
     await enviar_mensaje_whatsapp(
         to_phone=sender_phone,
