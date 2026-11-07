@@ -42,6 +42,7 @@ from services.duplicado_service import (
 )
 from services.numero_service import (
     TEXTO_CAMBIO_NUMERO_CONFIRMADO,
+    TEXTO_CAMBIO_NUMERO_CONFLICTO,
     TEXTO_CAMBIO_NUMERO_ERROR,
     TEXTO_CAMBIO_NUMERO_INICIO,
     TEXTO_CAMBIO_NUMERO_INVALIDO,
@@ -115,6 +116,7 @@ from services.reporte_service import (
 from services.sheets_service import (
     actualizar_telefono_usuario,
     append_transaction_to_sheet,
+    migrar_suscripcion,
     obtener_consentimiento,
     obtener_suscripcion,
     obtener_transacciones_cliente,
@@ -495,17 +497,47 @@ async def _procesar_pipeline(
 
     # 1.5 Fase 6.1 - Cambio de número (spec 5.6): la confirmación llega desde el número
     #     nuevo, que todavía no tiene consentimiento, por eso va antes del gate legal.
+    #     Orden endurecido (deuda #17): primero el chequeo de pestaña (si el número
+    #     nuevo ya tiene historial se aborta sin tocar nada), luego la migración de
+    #     consentimiento/perfil, y por último el control comercial (Suscripciones).
     confirmacion_cambio = detectar_confirmacion_cambio_numero(transcripcion)
     if confirmacion_cambio is not None:
         telefono_anterior, codigo_cambio = confirmacion_cambio
         if telefono_anterior != sender_phone and await verificar_codigo_cambio(
             telefono_anterior, codigo_cambio
         ):
+            pestana_ok = await renombrar_pestana_cliente(telefono_anterior, sender_phone)
+            if not pestana_ok:
+                logger.warning(
+                    "cambio_numero: conflicto de pestaña %s -> %s (historial existente o error)",
+                    telefono_anterior,
+                    sender_phone,
+                )
+                await enviar_mensaje_whatsapp(
+                    to_phone=sender_phone, mensaje=TEXTO_CAMBIO_NUMERO_CONFLICTO
+                )
+                return file_path or ""
             consentimiento_previo = await obtener_consentimiento(telefono_anterior)
             if consentimiento_previo and consentimiento_previo.get("estado"):
                 await registrar_consentimiento(sender_phone, str(consentimiento_previo["estado"]))
             await actualizar_telefono_usuario(telefono_anterior, sender_phone)
-            await renombrar_pestana_cliente(telefono_anterior, sender_phone)
+            estado_suscripcion = await migrar_suscripcion(telefono_anterior, sender_phone)
+            if estado_suscripcion is None:
+                logger.error(
+                    "cambio_numero: fallo al migrar Suscripciones %s -> %s; revisar a mano",
+                    telefono_anterior,
+                    sender_phone,
+                )
+            elif estado_suscripcion == "sin_suscripcion":
+                logger.info(
+                    "cambio_numero: el número viejo %s no tenía suscripción; nada que migrar",
+                    telefono_anterior,
+                )
+            elif estado_suscripcion == "nuevo_ya_tiene":
+                logger.info(
+                    "cambio_numero: el número nuevo %s ya tenía suscripción; no se duplicó",
+                    sender_phone,
+                )
             await enviar_mensaje_whatsapp(
                 to_phone=sender_phone, mensaje=TEXTO_CAMBIO_NUMERO_CONFIRMADO
             )
