@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     BACKUP_CRON_HOUR: int = Field(default=23)
     BACKUP_CRON_MINUTE: int = Field(default=0)
 
+    # Paso 4 Sprint — resumen semanal automático (Celery beat, hora de Costa Rica).
+    # Por defecto: lunes 08:00 CR (fuera del horario de silencio 22:00–07:00).
+    RESUMEN_SEMANAL_CRON_DAY_OF_WEEK: int = Field(default=1)
+    RESUMEN_SEMANAL_CRON_HOUR: int = Field(default=8)
+    RESUMEN_SEMANAL_CRON_MINUTE: int = Field(default=0)
+
 
 # Instanciación
 settings = Settings()

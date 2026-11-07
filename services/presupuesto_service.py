@@ -1,11 +1,16 @@
-import json
 import logging
-import os
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from services.sheets_service import (
+    eliminar_presupuesto_sheet,
+    guardar_presupuesto_sheet,
+    marcar_alerta_presupuesto_sheet,
+    obtener_presupuestos_sheet,
+)
 
 logger = logging.getLogger(__name__)
-
-PRESUPUESTOS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "presupuestos.json")
 
 
 @dataclass
@@ -14,85 +19,143 @@ class Presupuesto:
     limite: int
 
 
-def _asegurar_directorio() -> None:
-    os.makedirs(os.path.dirname(PRESUPUESTOS_PATH), exist_ok=True)
+def _normalizar_categoria(cat: str) -> str:
+    cat = cat.lower().strip()
+    cat = (
+        cat.replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+    )
+    return cat
 
 
-def _cargar_presupuestos() -> dict[str, dict[str, int]]:
-    """Carga presupuestos desde JSON. Retorna dict[user_id][categoria] = limite."""
-    _asegurar_directorio()
-    if not os.path.exists(PRESUPUESTOS_PATH):
-        return {}
-    try:
-        with open(PRESUPUESTOS_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Error cargando presupuestos: %s", e)
-        return {}
-
-
-def _guardar_presupuestos(data: dict[str, dict[str, int]]) -> None:
-    _asegurar_directorio()
-    try:
-        with open(PRESUPUESTOS_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except OSError as e:
-        logger.error("Error guardando presupuestos: %s", e)
+def _periodo_actual() -> str:
+    return datetime.now().strftime("%Y-%m")
 
 
 async def obtener_presupuestos(sender_phone: str) -> dict[str, int]:
-    """Retorna todos los presupuestos del usuario: {categoria: limite}."""
-    data = _cargar_presupuestos()
-    return data.get(sender_phone, {})
+    """Retorna {categoria: limite} del teléfono, leído de la pestaña `Presupuestos`."""
+    filas = await obtener_presupuestos_sheet()
+    resultado: dict[str, int] = {}
+    for fila in filas:
+        if str(fila.get("telefono", "")).strip() != sender_phone:
+            continue
+        categoria = str(fila.get("categoria", "")).strip()
+        if not categoria:
+            continue
+        try:
+            limite = int(float(str(fila.get("limite", "0")) or 0))
+        except (TypeError, ValueError):
+            continue
+        if limite > 0:
+            resultado[_normalizar_categoria(categoria)] = limite
+    return resultado
 
 
 async def obtener_presupuesto_categoria(sender_phone: str, categoria: str) -> int | None:
     """Retorna el límite de una categoría específica o None si no tiene presupuesto."""
     presupuestos = await obtener_presupuestos(sender_phone)
-    return presupuestos.get(categoria)
+    return presupuestos.get(_normalizar_categoria(categoria))
 
 
 async def establecer_presupuesto(sender_phone: str, categoria: str, limite: int) -> bool:
     """Establece o actualiza el presupuesto de una categoría. Retorna True si OK."""
     if limite <= 0:
         return False
-    data = _cargar_presupuestos()
-    user_data = data.get(sender_phone, {})
-    user_data[categoria] = limite
-    data[sender_phone] = user_data
-    _guardar_presupuestos(data)
-    logger.info("Presupuesto establecido: %s -> %s = %d", sender_phone, categoria, limite)
-    return True
+    guardado = await guardar_presupuesto_sheet(sender_phone, categoria, limite)
+    if guardado:
+        logger.info("Presupuesto establecido: %s -> %s = %d", sender_phone, categoria, limite)
+    return guardado
 
 
 async def eliminar_presupuesto(sender_phone: str, categoria: str) -> bool:
     """Elimina el presupuesto de una categoría. Retorna True si existía."""
-    data = _cargar_presupuestos()
-    user_data = data.get(sender_phone, {})
-    if categoria in user_data:
-        del user_data[categoria]
-        data[sender_phone] = user_data
-        _guardar_presupuestos(data)
+    eliminado = await eliminar_presupuesto_sheet(sender_phone, categoria)
+    if eliminado:
         logger.info("Presupuesto eliminado: %s -> %s", sender_phone, categoria)
-        return True
-    return False
+    return eliminado
+
+
+def calcular_gastado_mes(
+    filas: list[list[Any]], categoria: str, ahora: datetime | None = None
+) -> int:
+    """
+    Suma los gastos del mes en curso para una categoría (misma regla que las
+    consultas: montos negativos de la pestaña del cliente, mes calendario).
+    """
+    referencia = ahora or datetime.now()
+    inicio_mes = referencia.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    categoria_norm = _normalizar_categoria(categoria)
+    gastado = 0
+    for row in filas:
+        if len(row) < 3:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(row[0]).replace("/", "-"))
+        except ValueError:
+            continue
+        if dt < inicio_mes:
+            continue
+        categoria_hoja = _normalizar_categoria(str(row[2]))
+        if not (
+            categoria_hoja == categoria_norm
+            or categoria_norm in categoria_hoja
+            or categoria_hoja in categoria_norm
+        ):
+            continue
+        try:
+            monto = int(str(row[1]))
+        except (TypeError, ValueError):
+            continue
+        if monto < 0:
+            gastado += abs(monto)
+    return gastado
 
 
 async def verificar_y_alertar_presupuesto(
     sender_phone: str, categoria: str, monto_nuevo: int, total_mes: int
 ) -> str | None:
     """
-    Verifica si el gasto supera el presupuesto de la categoría.
-    Retorna mensaje de alerta si se superó, None si no hay presupuesto o no se superó.
+    (Paso 4, P1-1) Devuelve la alerta de presupuesto si corresponde: al 80% y al
+    100% del límite mensual, una sola vez por umbral y periodo. La marca se guarda
+    en la propia fila de la pestaña `Presupuestos` (alerta_80/alerta_100), así no
+    se pierde al reiniciar el worker.
     """
-    limite = await obtener_presupuesto_categoria(sender_phone, categoria)
-    if limite is None:
+    filas = await obtener_presupuestos_sheet()
+    categoria_norm = _normalizar_categoria(categoria)
+    fila_objetivo: dict[str, str] | None = None
+    for fila in filas:
+        if str(fila.get("telefono", "")).strip() != sender_phone:
+            continue
+        if _normalizar_categoria(str(fila.get("categoria", ""))) == categoria_norm:
+            fila_objetivo = fila
+    if fila_objetivo is None:
         return None
-    if total_mes > limite:
+    try:
+        limite = int(float(str(fila_objetivo.get("limite", "0")) or 0))
+    except (TypeError, ValueError):
+        return None
+    if limite <= 0:
+        return None
+
+    periodo = _periodo_actual()
+    pct = total_mes * 100 // limite
+    if total_mes >= limite and str(fila_objetivo.get("alerta_100", "")).strip() != periodo:
+        await marcar_alerta_presupuesto_sheet(sender_phone, categoria, 100, periodo)
+        await marcar_alerta_presupuesto_sheet(sender_phone, categoria, 80, periodo)
         return (
-            f"⚠️ Presupuesto {categoria} superado: "
-            f"₡{total_mes:,} / ₡{limite:,} ({total_mes * 100 // limite}%)."
+            f"🚨 Te pasaste del presupuesto de {categoria}: "
+            f"₡{total_mes:,} / ₡{limite:,} ({pct}%). "
+            "Queda registrado igual; revisá tus gastos si querés ajustar."
+        )
+    if pct >= 80 and str(fila_objetivo.get("alerta_80", "")).strip() != periodo:
+        await marcar_alerta_presupuesto_sheet(sender_phone, categoria, 80, periodo)
+        restante = max(0, limite - total_mes)
+        return (
+            f"⚠️ Vas por ₡{total_mes:,} de ₡{limite:,} en {categoria} ({pct}%). "
+            f"Te quedan ₡{restante:,} este mes."
         )
     return None
 
