@@ -238,6 +238,10 @@ def test_regla_j_presupuesto_no_guarda_fila():
             return_value={"accion": "no_transaccion", "monto": None, "categoria": None},
         ),
         patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch(
+            "workers.tasks.establecer_presupuesto",
+            return_value=True,
+        ),
         patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
         patch("workers.tasks.update_last_transaction_to_sheet") as mock_update,
         patch("workers.tasks.httpx.Client"),

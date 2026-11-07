@@ -72,5 +72,21 @@ def suscripcion_activa_por_defecto():
         yield
 
 
+@pytest.fixture(autouse=True)
+def sin_google_sheets_real():
+    """
+    Ningún test toca el Google Sheet real. Lección del 07/11/2026: al mover los
+    presupuestos a la pestaña `Presupuestos`, un test de la trampa J que no mockeaba
+    el guardado escribió una fila en la hoja de PRODUCCIÓN. Este cinturón bloquea
+    `get_sheets_client` en todos los tests; los tests que necesitan simular Sheets
+    lo parchean explícitamente y su mock interior gana.
+    """
+    with patch(
+        "services.sheets_service.get_sheets_client",
+        side_effect=RuntimeError("Google Sheets real bloqueado en tests"),
+    ):
+        yield
+
+
 # Configuración de pytest-asyncio para evitar warnings
 pytest_plugins: list[str] = []

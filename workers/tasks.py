@@ -384,19 +384,35 @@ async def _procesar_presupuesto(sender_phone: str, transcripcion: str) -> bool:
     presupuesto = detectar_presupuesto(transcripcion)
     if presupuesto:
         cat_nueva, limite = presupuesto
-        await establecer_presupuesto(sender_phone, cat_nueva, limite)
-        await enviar_mensaje_whatsapp(
-            to_phone=sender_phone,
-            mensaje=f"Presupuesto {cat_nueva}: ₡{limite:,}/mes guardado.",
+        guardado = await establecer_presupuesto(sender_phone, cat_nueva, limite)
+        mensaje = (
+            f"Presupuesto {cat_nueva}: ₡{limite:,}/mes guardado."
+            if guardado
+            else "No pude guardar el presupuesto ahora. Intentá de nuevo en unos segundos."
         )
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=mensaje)
         return True
 
     cat_eliminar = detectar_eliminar_presupuesto(transcripcion)
     if cat_eliminar:
-        await eliminar_presupuesto(sender_phone, cat_eliminar)
+        eliminado = await eliminar_presupuesto(sender_phone, cat_eliminar)
+        mensaje = (
+            f"Presupuesto eliminado: {cat_eliminar}."
+            if eliminado
+            else f"No encontré un presupuesto de {cat_eliminar} para borrar."
+        )
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=mensaje)
+        return True
+
+    # Si claramente quiso fijar un presupuesto pero no se pudo leer el monto
+    # (típico de transcripciones), no caemos al mensaje genérico de "no es un gasto".
+    if " ".join(transcripcion.lower().split()).startswith("presupuesto"):
         await enviar_mensaje_whatsapp(
             to_phone=sender_phone,
-            mensaje=f"Presupuesto eliminado: {cat_eliminar}.",
+            mensaje=(
+                "Entendí que querés fijar un presupuesto, pero no pude leer el monto. "
+                "Mandalo así: presupuesto transporte 20000."
+            ),
         )
         return True
 

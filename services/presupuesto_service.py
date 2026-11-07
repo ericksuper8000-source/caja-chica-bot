@@ -160,9 +160,27 @@ async def verificar_y_alertar_presupuesto(
     return None
 
 
+def _parsear_monto(valor: str) -> int | None:
+    """Interpreta montos dichos/escritos: '20000', '20.000', '20,000', '20 mil'."""
+    limpio = valor.lower().strip().replace("₡", "")
+    for sufijo in ("colones", "colon", "colón"):
+        if limpio.endswith(sufijo):
+            limpio = limpio[: -len(sufijo)].strip()
+    limpio = limpio.replace(".", "").replace(",", "").replace(" ", "")
+    multiplicador = 1
+    if limpio.endswith("mil"):
+        multiplicador = 1000
+        limpio = limpio[:-3]
+    if not limpio.isdigit():
+        return None
+    return int(limpio) * multiplicador
+
+
 def detectar_presupuesto(texto: str) -> tuple[str, int] | None:
     """
-    Detecta comando de presupuesto: "presupuesto comida 50000" o "presupuesto de comida 10000"
+    Detecta comandos de presupuesto con tolerancia a cómo llega la transcripción:
+    "presupuesto comida 50000", "presupuesto de comida 50.000",
+    "presupuesto para transporte 20 mil", "presupuesto luz 30000 colones".
     Retorna (categoria, limite) o None.
     """
     import re
@@ -173,23 +191,16 @@ def detectar_presupuesto(texto: str) -> tuple[str, int] | None:
     if not t.startswith("presupuesto"):
         return None
 
-    partes = t.split()
-    # Aceptar "presupuesto comida 10000" (3 partes) o "presupuesto de comida 10000" (4 partes)
-    if len(partes) not in (3, 4):
+    resto = t[len("presupuesto") :].strip()
+    palabras = resto.split()
+    while palabras and palabras[0] in ("de", "del", "para"):
+        palabras.pop(0)
+    if len(palabras) < 2:
         return None
 
-    # Si tiene 4 partes y la segunda es "de", saltarla
-    if len(partes) == 4 and partes[1] == "de":
-        _, _, categoria_raw, limite_raw = partes
-    else:
-        _, categoria_raw, limite_raw = partes
-
-    try:
-        limite = int(limite_raw)
-    except ValueError:
-        return None
-
-    if limite <= 0:
+    categoria_raw = palabras[0]
+    limite = _parsear_monto(" ".join(palabras[1:]))
+    if limite is None or limite <= 0:
         return None
 
     # Normalizar categoría (sinónimos básicos)

@@ -10,6 +10,65 @@ CONSENTIMIENTO_OK = {"estado": "aceptado", "version_politica": POLITICA_VERSION}
 
 
 @pytest.mark.anyio
+async def test_pipeline_guarda_presupuesto_y_confirma() -> None:
+    with (
+        patch("workers.tasks.obtener_consentimiento", return_value=CONSENTIMIENTO_OK),
+        patch(
+            "workers.tasks.establecer_presupuesto", new=AsyncMock(return_value=True)
+        ) as mock_establecer,
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+    ):
+        result = await _procesar_pipeline(
+            None, "50670000000", texto_entrante="presupuesto transporte 20.000"
+        )
+
+    assert result == ""
+    mock_establecer.assert_awaited_once_with("50670000000", "transporte", 20000)
+    mock_whatsapp.assert_awaited_once_with(
+        to_phone="50670000000",
+        mensaje="Presupuesto transporte: ₡20,000/mes guardado.",
+    )
+    mock_parser.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_pipeline_presupuesto_falla_al_guardar_no_miente() -> None:
+    with (
+        patch("workers.tasks.obtener_consentimiento", return_value=CONSENTIMIENTO_OK),
+        patch("workers.tasks.establecer_presupuesto", new=AsyncMock(return_value=False)),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+    ):
+        result = await _procesar_pipeline(
+            None, "50670000000", texto_entrante="presupuesto transporte 20000"
+        )
+
+    assert result == ""
+    mensaje = mock_whatsapp.call_args.kwargs["mensaje"]
+    assert "No pude guardar" in mensaje
+    mock_parser.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_pipeline_presupuesto_sin_monto_pide_formato() -> None:
+    with (
+        patch("workers.tasks.obtener_consentimiento", return_value=CONSENTIMIENTO_OK),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+    ):
+        result = await _procesar_pipeline(
+            None, "50670000000", texto_entrante="presupuesto transporte"
+        )
+
+    assert result == ""
+    mensaje = mock_whatsapp.call_args.kwargs["mensaje"]
+    assert "no pude leer el monto" in mensaje
+    assert "presupuesto transporte 20000" in mensaje
+    mock_parser.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_pipeline_stop_desactiva_automaticos() -> None:
     with (
         patch("workers.tasks.obtener_consentimiento", return_value=CONSENTIMIENTO_OK),
