@@ -135,6 +135,16 @@ class ResultadoComparacion:
 def _limpiar_texto(texto: str) -> str:
     texto = texto.lower().strip()
     texto = re.sub(r"[¿?¡!.,;:()\"'«»]", "", texto)
+    # La transcripción de voz escribe con tildes ("Cuánto", "más", "cómo"); las
+    # palabras clave del detector están sin tildes, así que se normalizan acá.
+    texto = (
+        texto.replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+        .replace("ü", "u")
+    )
     return texto
 
 

@@ -65,6 +65,15 @@ def test_eliminar_presupuesto_borra_la_fila(mock_client) -> None:
 
 
 @patch("services.sheets_service.get_sheets_client")
+def test_eliminar_presupuesto_ignora_tildes(mock_client) -> None:
+    worksheet = _worksheet_con([PRESUPUESTOS_HEADERS, _fila_presupuesto(categoria="Alimentación")])
+    mock_client.return_value.open_by_key.return_value = _mock_spreadsheet(worksheet)
+
+    assert _sync_eliminar_presupuesto("id", "50670000000", "alimentacion") is True
+    worksheet.delete_rows.assert_called_once_with(2)
+
+
+@patch("services.sheets_service.get_sheets_client")
 def test_marcar_alerta_usa_la_columna_del_umbral(mock_client) -> None:
     worksheet = _worksheet_con([PRESUPUESTOS_HEADERS, _fila_presupuesto()])
     mock_client.return_value.open_by_key.return_value = _mock_spreadsheet(worksheet)

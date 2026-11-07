@@ -69,6 +69,47 @@ async def test_pipeline_presupuesto_sin_monto_pide_formato() -> None:
 
 
 @pytest.mark.anyio
+async def test_pipeline_elimina_presupuesto() -> None:
+    with (
+        patch("workers.tasks.obtener_consentimiento", return_value=CONSENTIMIENTO_OK),
+        patch(
+            "workers.tasks.eliminar_presupuesto", new=AsyncMock(return_value=True)
+        ) as mock_eliminar,
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+    ):
+        result = await _procesar_pipeline(
+            None, "50670000000", texto_entrante="eliminá el presupuesto de alimentación"
+        )
+
+    assert result == ""
+    mock_eliminar.assert_awaited_once_with("50670000000", "alimentacion")
+    mock_whatsapp.assert_awaited_once_with(
+        to_phone="50670000000",
+        mensaje="Presupuesto eliminado: alimentacion.",
+    )
+    mock_parser.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_pipeline_elimina_presupuesto_inexistente_no_miente() -> None:
+    with (
+        patch("workers.tasks.obtener_consentimiento", return_value=CONSENTIMIENTO_OK),
+        patch("workers.tasks.eliminar_presupuesto", new=AsyncMock(return_value=False)),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+        patch("workers.tasks.parse_financial_text") as mock_parser,
+    ):
+        result = await _procesar_pipeline(
+            None, "50670000000", texto_entrante="borrar presupuesto transporte"
+        )
+
+    assert result == ""
+    mensaje = mock_whatsapp.call_args.kwargs["mensaje"]
+    assert "No encontré un presupuesto" in mensaje
+    mock_parser.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_pipeline_stop_desactiva_automaticos() -> None:
     with (
         patch("workers.tasks.obtener_consentimiento", return_value=CONSENTIMIENTO_OK),

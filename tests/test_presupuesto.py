@@ -5,6 +5,7 @@ import pytest
 
 from services.presupuesto_service import (
     calcular_gastado_mes,
+    detectar_eliminar_presupuesto,
     detectar_presupuesto,
     eliminar_presupuesto,
     establecer_presupuesto,
@@ -77,6 +78,35 @@ def test_detectar_presupuesto_tolera_formatos(texto: str, esperado: tuple[str, i
 )
 def test_detectar_presupuesto_rechaza_invalidos(texto: str) -> None:
     assert detectar_presupuesto(texto) is None
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        ("eliminar presupuesto de alimentación", "alimentacion"),
+        ("borrá el presupuesto de transporte", "transporte"),
+        ("quiero quitar el presupuesto de comida", "alimentacion"),
+        ("eliminá el presupuesto de luz", "servicios"),
+        ("sacar presupuesto alimentacion", "alimentacion"),
+        ("borrar el presupuesto de la alimentación", "alimentacion"),
+    ],
+)
+def test_detectar_eliminar_presupuesto_tolera_formatos(texto: str, esperado: str) -> None:
+    assert detectar_eliminar_presupuesto(texto) == esperado
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        "eliminar gasto de transporte",
+        "borrar",
+        "eliminar presupuesto",
+        "gasté 2000 en transporte",
+        "presupuesto transporte 20000",
+    ],
+)
+def test_detectar_eliminar_presupuesto_rechaza_invalidos(texto: str) -> None:
+    assert detectar_eliminar_presupuesto(texto) is None
 
 
 @pytest.mark.anyio

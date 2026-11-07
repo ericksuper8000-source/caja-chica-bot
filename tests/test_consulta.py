@@ -7,10 +7,12 @@ from services.consulta_service import (
     ConsultaCategoria,
     ConsultaComparacion,
     ConsultaMayor,
+    ConsultaPresupuestoRestante,
     ResultadoCategoria,
     ResultadoComparacion,
     ResultadoMayor,
     _filtrar_por_periodo,
+    _limpiar_texto,
     _parse_fecha,
     calcular_consulta_categoria,
     calcular_consulta_comparacion,
@@ -282,3 +284,17 @@ class TestConsultaPipeline:
             assert res is not None
             assert res.actual_total == 8000
             assert res.anterior_total == 12000
+
+    @pytest.mark.anyio
+    async def test_deteccion_presupuesto_restante_con_tildes(self) -> None:
+        """Caso real 07/11: Whisper transcribe 'Cuánto me queda...' con tilde."""
+        with patch(
+            "services.consulta_service._categorias_reales",
+            new_callable=AsyncMock,
+        ) as mock_cats:
+            mock_cats.return_value = {"transporte", "alimentacion"}
+            consulta = await detectar_consulta("50660646370", "¿Cuánto me queda en transporte?")
+        assert consulta == ConsultaPresupuestoRestante(categoria="transporte")
+
+    def test_limpiar_texto_quita_tildes(self) -> None:
+        assert _limpiar_texto("¿Cuánto me queda?") == "cuanto me queda"

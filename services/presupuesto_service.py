@@ -307,6 +307,37 @@ def _parsear_monto(valor: str) -> int | None:
     return _palabras_a_numero(limpio)
 
 
+_SINONIMOS_CATEGORIAS = {
+    "comida": "alimentacion",
+    "alimentos": "alimentacion",
+    "transporte": "transporte",
+    "bus": "transporte",
+    "taxi": "transporte",
+    "uber": "transporte",
+    "gasolina": "transporte",
+    "combustible": "transporte",
+    "vivienda": "vivienda",
+    "alquiler": "vivienda",
+    "servicios": "servicios",
+    "luz": "servicios",
+    "agua": "servicios",
+    "internet": "servicios",
+    "salud": "salud",
+    "medico": "salud",
+    "medicina": "salud",
+    "educacion": "educacion",
+    "entretenimiento": "entretenimiento",
+    "ropa": "ropa",
+    "tecnologia": "tecnologia",
+    "otros": "otros",
+}
+
+
+def _normalizar_categoria_presupuesto(categoria: str) -> str:
+    normalizada = _normalizar_categoria(categoria)
+    return _SINONIMOS_CATEGORIAS.get(normalizada, normalizada)
+
+
 def detectar_presupuesto(texto: str) -> tuple[str, int] | None:
     """
     Detecta comandos de presupuesto con tolerancia a cómo llega la transcripción:
@@ -340,71 +371,64 @@ def detectar_presupuesto(texto: str) -> tuple[str, int] | None:
     if limite is None:
         return None
 
-    # Normalizar categoría (sinónimos básicos)
-    sinónimos = {
-        "comida": "alimentacion",
-        "alimentos": "alimentacion",
-        "transporte": "transporte",
-        "bus": "transporte",
-        "taxi": "transporte",
-        "uber": "transporte",
-        "gasolina": "transporte",
-        "combustible": "transporte",
-        "vivienda": "vivienda",
-        "alquiler": "vivienda",
-        "servicios": "servicios",
-        "luz": "servicios",
-        "agua": "servicios",
-        "internet": "servicios",
-        "salud": "salud",
-        "medico": "salud",
-        "medicina": "salud",
-        "educacion": "educacion",
-        "entretenimiento": "entretenimiento",
-        "ropa": "ropa",
-        "tecnologia": "tecnologia",
-        "otros": "otros",
-    }
-    cat_norm = _normalizar_categoria(categoria_raw)
-    categoria = sinónimos.get(cat_norm, cat_norm)
+    categoria = _normalizar_categoria_presupuesto(categoria_raw)
 
     return (categoria, limite)
 
 
 def detectar_eliminar_presupuesto(texto: str) -> str | None:
-    """Detecta: 'borrar presupuesto comida' o 'eliminar presupuesto de comida'."""
+    """
+    Detecta comandos para borrar un presupuesto, tolerante a voz:
+    "borrar presupuesto comida", "eliminá el presupuesto de alimentación",
+    "quiero quitar el presupuesto de transporte".
+    Retorna la categoría normalizada o None.
+    """
     import re
 
-    t = texto.lower().strip()
+    t = _sin_tildes(texto.lower().strip())
     t = re.sub(r"[¿?¡!.,;:()\"'«»]", "", t)
+    palabras = t.split()
+    while palabras and palabras[0] in (
+        "quiero",
+        "quisiera",
+        "necesito",
+        "deseo",
+        "podes",
+        "puedes",
+    ):
+        palabras.pop(0)
+    if len(palabras) < 3:
+        return None
 
-    for verbo in ("borrar", "eliminar", "quitar", "quite"):
-        if t.startswith(f"{verbo} presupuesto"):
-            partes = t.split()
-            if len(partes) >= 3:
-                # Saltar "de" si está en posición 2: "borrar presupuesto de comida"
-                idx_categoria = 2
-                if len(partes) >= 4 and partes[2] == "de":
-                    idx_categoria = 3
-                if idx_categoria < len(partes):
-                    categoria_raw = partes[idx_categoria]
-                    sinónimos = {
-                        "comida": "alimentacion",
-                        "alimentos": "alimentacion",
-                        "transporte": "transporte",
-                        "bus": "transporte",
-                        "taxi": "transporte",
-                        "uber": "transporte",
-                        "vivienda": "vivienda",
-                        "servicios": "servicios",
-                        "salud": "salud",
-                        "otros": "otros",
-                    }
-                    cat = sinónimos.get(
-                        categoria_raw.lower().strip(), categoria_raw.lower().strip()
-                    )
-                    # Defensa: si por alguna razón devolvimos "de", forzar None
-                    if cat == "de":
-                        return None
-                    return cat
-    return None
+    verbos = {
+        "borrar",
+        "borra",
+        "borre",
+        "eliminar",
+        "elimina",
+        "elimine",
+        "quitar",
+        "quita",
+        "quite",
+        "sacar",
+        "saca",
+        "saque",
+    }
+    if palabras[0] not in verbos:
+        return None
+
+    resto = palabras[1:]
+    relleno = {"el", "la", "los", "las", "mi", "mis", "un", "una"}
+    while resto and resto[0] in relleno:
+        resto.pop(0)
+    if not resto or resto[0] != "presupuesto":
+        return None
+
+    resto = resto[1:]
+    while resto and resto[0] in {"de", "del"} | relleno:
+        resto.pop(0)
+    if not resto:
+        return None
+
+    categoria = _normalizar_categoria_presupuesto(resto[0])
+    return categoria or None
