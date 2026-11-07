@@ -5,6 +5,7 @@ import pytest
 
 from services.numero_service import (
     TEXTO_CAMBIO_NUMERO_CONFIRMADO,
+    TEXTO_CAMBIO_NUMERO_CONFLICTO,
     TEXTO_CAMBIO_NUMERO_INICIO,
     TEXTO_CAMBIO_NUMERO_INVALIDO,
     TEXTO_CAMBIO_NUMERO_SIN_ACCESO,
@@ -15,7 +16,11 @@ from services.numero_service import (
     detectar_recuperacion_manual,
     verificar_codigo_cambio,
 )
-from services.sheets_service import actualizar_telefono_usuario, renombrar_pestana_cliente
+from services.sheets_service import (
+    actualizar_telefono_usuario,
+    migrar_suscripcion,
+    renombrar_pestana_cliente,
+)
 from workers.tasks import _procesar_pipeline
 
 
@@ -127,6 +132,65 @@ async def test_actualizar_telefono_usuario_destino_existe(mock_get_sheets_client
 
 @patch("services.sheets_service.get_sheets_client")
 @pytest.mark.anyio
+async def test_migrar_suscripcion_copia_fila_y_cancela_vieja(mock_get_sheets_client) -> None:
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+    mock_worksheet.get_all_values.return_value = [
+        ["telefono", "plan", "estado", "fecha_inicio", "fecha_renovacion", "ultimo_pago"],
+        ["50688888888", "piloto", "de_prueba", "2026-10-18", "", ""],
+    ]
+
+    assert await migrar_suscripcion("50688888888", "50670000000") == "migrada"
+    mock_worksheet.append_row.assert_called_once()
+    fila = mock_worksheet.append_row.call_args.args[0]
+    assert fila == ["50670000000", "piloto", "de_prueba", "2026-10-18", "", ""]
+    mock_worksheet.update_cell.assert_called_once_with(2, 3, "cancelado")
+
+
+@patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
+async def test_migrar_suscripcion_sin_fila_vieja_no_crea_nada(mock_get_sheets_client) -> None:
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+    mock_worksheet.get_all_values.return_value = [
+        ["telefono", "plan", "estado", "fecha_inicio", "fecha_renovacion", "ultimo_pago"],
+    ]
+
+    assert await migrar_suscripcion("50688888888", "50670000000") == "sin_suscripcion"
+    mock_worksheet.append_row.assert_not_called()
+    mock_worksheet.update_cell.assert_not_called()
+
+
+@patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
+async def test_migrar_suscripcion_nuevo_ya_tiene_no_duplica(mock_get_sheets_client) -> None:
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+    mock_worksheet.get_all_values.return_value = [
+        ["telefono", "plan", "estado", "fecha_inicio", "fecha_renovacion", "ultimo_pago"],
+        ["50688888888", "piloto", "de_prueba", "2026-10-18", "", ""],
+        ["50670000000", "piloto", "activo", "2026-11-01", "", ""],
+    ]
+
+    assert await migrar_suscripcion("50688888888", "50670000000") == "nuevo_ya_tiene"
+    mock_worksheet.append_row.assert_not_called()
+    mock_worksheet.update_cell.assert_called_once_with(2, 3, "cancelado")
+
+
+@patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
 async def test_renombrar_pestana_cliente(mock_get_sheets_client) -> None:
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
@@ -159,14 +223,43 @@ async def test_renombrar_pestana_origen_inexistente(mock_get_sheets_client) -> N
 
 @patch("services.sheets_service.get_sheets_client")
 @pytest.mark.anyio
-async def test_renombrar_pestana_destino_existe(mock_get_sheets_client) -> None:
+async def test_renombrar_pestana_destino_vacio_se_reemplaza(mock_get_sheets_client) -> None:
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
+    mock_worksheet_nueva = MagicMock()
+    mock_worksheet_vieja = MagicMock()
     mock_get_sheets_client.return_value = mock_client
     mock_client.open_by_key.return_value = mock_spreadsheet
-    mock_spreadsheet.worksheet.return_value = MagicMock()
+    mock_spreadsheet.worksheet.side_effect = [
+        mock_worksheet_nueva,
+        mock_worksheet_vieja,
+    ]
+    mock_worksheet_nueva.get_all_values.return_value = [
+        ["fecha", "monto", "categoria", "detalle", "telefono"],
+    ]
+
+    assert await renombrar_pestana_cliente("50688888888", "50670000000") is True
+    mock_spreadsheet.del_worksheet.assert_called_once_with(mock_worksheet_nueva)
+    mock_worksheet_vieja.update_title.assert_called_once_with("50670000000")
+
+
+@patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
+async def test_renombrar_pestana_destino_con_datos_conflicto(mock_get_sheets_client) -> None:
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet_nueva = MagicMock()
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet_nueva
+    mock_worksheet_nueva.get_all_values.return_value = [
+        ["fecha", "monto", "categoria", "detalle", "telefono"],
+        ["2026-10-13 12:54:48", "-920", "Transporte", "Pasaje en bus", "50670000000"],
+    ]
 
     assert await renombrar_pestana_cliente("50688888888", "50670000000") is False
+    mock_spreadsheet.del_worksheet.assert_not_called()
+    mock_worksheet_nueva.update_title.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -180,6 +273,7 @@ async def test_pipeline_confirma_cambio_numero() -> None:
         patch("workers.tasks.registrar_consentimiento") as mock_registrar,
         patch("workers.tasks.actualizar_telefono_usuario") as mock_usuario,
         patch("workers.tasks.renombrar_pestana_cliente") as mock_pestana,
+        patch("workers.tasks.migrar_suscripcion", return_value="migrada") as mock_migrar,
         patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
     ):
         result = await _procesar_pipeline(
@@ -191,6 +285,58 @@ async def test_pipeline_confirma_cambio_numero() -> None:
     mock_registrar.assert_called_once_with("50670000000", "aceptado")
     mock_usuario.assert_called_once_with("50688888888", "50670000000")
     mock_pestana.assert_called_once_with("50688888888", "50670000000")
+    mock_migrar.assert_called_once_with("50688888888", "50670000000")
+    mock_whatsapp.assert_called_once_with(
+        to_phone="50670000000", mensaje=TEXTO_CAMBIO_NUMERO_CONFIRMADO
+    )
+
+
+@pytest.mark.anyio
+async def test_pipeline_conflicto_pestana_aborta_sin_migrar() -> None:
+    with (
+        patch("workers.tasks.verificar_codigo_cambio", return_value=True),
+        patch("workers.tasks.renombrar_pestana_cliente", return_value=False),
+        patch("workers.tasks.obtener_consentimiento") as mock_consentimiento,
+        patch("workers.tasks.registrar_consentimiento") as mock_registrar,
+        patch("workers.tasks.actualizar_telefono_usuario") as mock_usuario,
+        patch("workers.tasks.migrar_suscripcion") as mock_migrar,
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+    ):
+        result = await _procesar_pipeline(
+            None, "50670000000", texto_entrante="cambiar numero 50688888888 123456"
+        )
+
+    assert result == ""
+    mock_consentimiento.assert_not_called()
+    mock_registrar.assert_not_called()
+    mock_usuario.assert_not_called()
+    mock_migrar.assert_not_called()
+    mock_whatsapp.assert_called_once_with(
+        to_phone="50670000000", mensaje=TEXTO_CAMBIO_NUMERO_CONFLICTO
+    )
+
+
+@pytest.mark.anyio
+async def test_pipeline_confirma_aunque_falle_migracion_suscripcion() -> None:
+    with (
+        patch("workers.tasks.verificar_codigo_cambio", return_value=True),
+        patch("workers.tasks.renombrar_pestana_cliente", return_value=True),
+        patch(
+            "workers.tasks.obtener_consentimiento",
+            return_value={"estado": "aceptado", "version_politica": "1.0"},
+        ),
+        patch("workers.tasks.registrar_consentimiento") as mock_registrar,
+        patch("workers.tasks.actualizar_telefono_usuario") as mock_usuario,
+        patch("workers.tasks.migrar_suscripcion", return_value=None),
+        patch("workers.tasks.enviar_mensaje_whatsapp") as mock_whatsapp,
+    ):
+        result = await _procesar_pipeline(
+            None, "50670000000", texto_entrante="cambiar numero 50688888888 123456"
+        )
+
+    assert result == ""
+    mock_registrar.assert_called_once_with("50670000000", "aceptado")
+    mock_usuario.assert_called_once_with("50688888888", "50670000000")
     mock_whatsapp.assert_called_once_with(
         to_phone="50670000000", mensaje=TEXTO_CAMBIO_NUMERO_CONFIRMADO
     )

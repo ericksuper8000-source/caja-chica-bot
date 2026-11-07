@@ -420,6 +420,77 @@ async def obtener_suscripcion(sender_phone: str) -> dict[str, Any] | None:
         return None
 
 
+def _sync_migrar_suscripcion(
+    spreadsheet_id: str, telefono_anterior: str, telefono_nuevo: str
+) -> str:
+    """
+    Operación síncrona (deuda #17): muda el control comercial al cambiar de número.
+    - Si el número viejo no tiene fila en `Suscripciones`: no se crea nada
+      ('sin_suscripcion').
+    - Si el número nuevo ya tiene fila propia: no se duplica ('nuevo_ya_tiene').
+    - En ambos casos con fila vieja, se marca su estado como `cancelado` para
+      revocar el acceso del número anterior (el bot solo lee esta pestaña).
+    Retorna: 'migrada', 'sin_suscripcion' o 'nuevo_ya_tiene'.
+    """
+    worksheet = _sync_get_suscripciones_worksheet(spreadsheet_id)
+    filas = worksheet.get_all_values()
+    fila_vieja: list[str] | None = None
+    fila_vieja_numero = 0
+    nuevo_tiene_fila = False
+    for numero, row in enumerate(filas, start=1):
+        if not row:
+            continue
+        telefono = str(row[0]).strip()
+        if telefono == telefono_anterior:
+            fila_vieja = row
+            fila_vieja_numero = numero
+        elif telefono == telefono_nuevo:
+            nuevo_tiene_fila = True
+    if fila_vieja is None:
+        return "sin_suscripcion"
+
+    if nuevo_tiene_fila:
+        resultado = "nuevo_ya_tiene"
+    else:
+        fila_migrada = [telefono_nuevo] + [
+            str(fila_vieja[i]) if i < len(fila_vieja) else ""
+            for i in range(1, len(SUSCRIPCION_HEADERS))
+        ]
+        worksheet.append_row(
+            fila_migrada,
+            value_input_option=ValueInputOption.user_entered,
+        )
+        resultado = "migrada"
+
+    estado_viejo = str(fila_vieja[2]).strip().lower() if len(fila_vieja) > 2 else ""
+    if estado_viejo != "cancelado":
+        worksheet.update_cell(fila_vieja_numero, 3, "cancelado")
+    return resultado
+
+
+async def migrar_suscripcion(telefono_anterior: str, telefono_nuevo: str) -> str | None:
+    """
+    Muda el control comercial al cambiar de número (deuda #17): copia la fila de
+    `Suscripciones` al número nuevo (solo si no tiene una) y revoca el acceso del
+    número anterior marcándolo `cancelado`. Retorna 'migrada', 'sin_suscripcion' o
+    'nuevo_ya_tiene'; None si hubo un error (el pipeline lo registra y avisa).
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_migrar_suscripcion,
+            spreadsheet_id,
+            telefono_anterior,
+            telefono_nuevo,
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al migrar suscripción: {error}")
+        return None
+    except Exception as e:
+        logger.error(f"Error inesperado al migrar suscripción: {e}")
+        return None
+
+
 # ==========================================
 # FASE 6.1 - USUARIOS (ADR-0019): perfil persistente del alta guiada
 # ==========================================
@@ -562,14 +633,22 @@ async def actualizar_telefono_usuario(telefono_anterior: str, telefono_nuevo: st
 def _sync_renombrar_pestana_cliente(
     spreadsheet_id: str, telefono_anterior: str, telefono_nuevo: str
 ) -> bool:
-    """Renombra la pestaña de transacciones del cliente (spec 5.6)."""
+    """
+    Renombra la pestaña de transacciones del cliente (spec 5.6). Endurecido
+    (deuda #17): si la pestaña del número nuevo ya existe pero está vacía (solo
+    encabezado), se reemplaza; si ya tiene historial, no se toca nada y se retorna
+    False para que el pipeline avise en vez de pisar datos.
+    """
     client = get_sheets_client()
     spreadsheet = client.open_by_key(spreadsheet_id)
     try:
-        spreadsheet.worksheet(telefono_nuevo)
-        return False
+        worksheet_nueva = spreadsheet.worksheet(telefono_nuevo)
     except gspread.exceptions.WorksheetNotFound:
-        pass
+        worksheet_nueva = None
+    if worksheet_nueva is not None:
+        if len(worksheet_nueva.get_all_values()) > 1:
+            return False
+        spreadsheet.del_worksheet(worksheet_nueva)
     try:
         worksheet = spreadsheet.worksheet(telefono_anterior)
     except gspread.exceptions.WorksheetNotFound:

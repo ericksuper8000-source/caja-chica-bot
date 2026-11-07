@@ -47,6 +47,11 @@ TEXTO_CAMBIO_NUMERO_SIN_ACCESO = (
 
 TEXTO_CAMBIO_NUMERO_ERROR = "No pude generar el código ahora. Intentá de nuevo en unos minutos."
 
+TEXTO_CAMBIO_NUMERO_CONFLICTO = (
+    "No pude completar el cambio: el número nuevo ya tiene historial o hubo un "
+    "problema técnico. Avisale a quien te activó el bot para resolverlo a mano."
+)
+
 
 def clave_cambio_numero(telefono: str) -> str:
     return f"{KEY_PREFIX}:{telefono}"
