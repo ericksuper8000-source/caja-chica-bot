@@ -49,6 +49,16 @@ def _fila(
         ("presupuesto servicios cien mil", ("servicios", 100000)),
         ("presupuesto transporte doscientos mil", ("transporte", 200000)),
         ("presupuesto transporte un millón", ("transporte", 1000000)),
+        (
+            "presupuesto de alimentación $20,000",
+            ("alimentacion", 20000),
+        ),
+        (
+            "presupuesto de transporte público veinte mil",
+            ("transporte", 20000),
+        ),
+        ("presupuesto transporte 20 mil al mes", ("transporte", 20000)),
+        ("presupuesto transporte 20mil mensual", ("transporte", 20000)),
     ],
 )
 def test_detectar_presupuesto_tolera_formatos(texto: str, esperado: tuple[str, int]) -> None:

@@ -214,7 +214,25 @@ _NUMEROS_PALABRA = {
 }
 
 _PALABRAS_IGNORADAS = frozenset(
-    {"y", "de", "del", "para", "en", "colones", "colon", "pesos", "peso"}
+    {
+        "y",
+        "de",
+        "del",
+        "para",
+        "en",
+        "al",
+        "por",
+        "cada",
+        "mes",
+        "mensual",
+        "semanal",
+        "semana",
+        "quincenal",
+        "colones",
+        "colon",
+        "pesos",
+        "peso",
+    }
 )
 
 
@@ -230,6 +248,11 @@ def _sin_tildes(texto: str) -> str:
     )
 
 
+def _limpiar_simbolos_moneda(texto: str) -> str:
+    """Quita símbolos de moneda que agrega la transcripción ('$', '₡', '€', 'USD'...)."""
+    return texto.replace("$", "").replace("₡", "").replace("€", "").replace("usd", "").strip()
+
+
 def _palabras_a_numero(texto: str) -> int | None:
     """Convierte montos dichos con palabras: 'veinte mil', 'cien mil', 'un millón'."""
     palabras = _sin_tildes(texto).replace("-", " ").split()
@@ -239,7 +262,18 @@ def _palabras_a_numero(texto: str) -> int | None:
     actual = 0
     visto = False
     for palabra in palabras:
+        palabra = _limpiar_simbolos_moneda(palabra).replace(".", "").replace(",", "")
+        if not palabra:
+            continue
         if palabra in _PALABRAS_IGNORADAS:
+            continue
+        if palabra.isdigit():
+            actual += int(palabra)
+            visto = True
+            continue
+        if palabra.endswith("mil") and palabra[:-3].isdigit():
+            total += int(palabra[:-3]) * 1000
+            visto = True
             continue
         if palabra == "mil":
             total += (actual or 1) * 1000
@@ -258,9 +292,9 @@ def _palabras_a_numero(texto: str) -> int | None:
 
 
 def _parsear_monto(valor: str) -> int | None:
-    """Interpreta montos dichos/escritos: '20000', '20.000', '20 mil', 'veinte mil'."""
-    limpio = valor.lower().strip().replace("₡", "")
-    for sufijo in ("colones", "colon", "colón"):
+    """Interpreta montos dichos/escritos: '20000', '20.000', '$20,000', '20 mil'."""
+    limpio = _limpiar_simbolos_moneda(_sin_tildes(valor))
+    for sufijo in ("colones", "colon"):
         if limpio.endswith(sufijo):
             limpio = limpio[: -len(sufijo)].strip()
     solo_digitos = limpio.replace(".", "").replace(",", "").replace(" ", "")
@@ -297,8 +331,13 @@ def detectar_presupuesto(texto: str) -> tuple[str, int] | None:
         return None
 
     categoria_raw = palabras[0]
-    limite = _parsear_monto(" ".join(palabras[1:]))
-    if limite is None or limite <= 0:
+    limite = None
+    for inicio in range(1, len(palabras)):
+        candidato = _parsear_monto(" ".join(palabras[inicio:]))
+        if candidato is not None and candidato > 0:
+            limite = candidato
+            break
+    if limite is None:
         return None
 
     # Normalizar categoría (sinónimos básicos)
