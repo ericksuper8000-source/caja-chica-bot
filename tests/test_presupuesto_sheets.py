@@ -76,6 +76,16 @@ def test_marcar_alerta_usa_la_columna_del_umbral(mock_client) -> None:
 
 
 @patch("services.sheets_service.get_sheets_client")
+def test_marcar_alerta_ignora_tildes_y_mayusculas(mock_client) -> None:
+    """Caso real del 07/11: el pipeline pasa 'Alimentación' y la fila dice 'alimentacion'."""
+    worksheet = _worksheet_con([PRESUPUESTOS_HEADERS, _fila_presupuesto(categoria="alimentacion")])
+    mock_client.return_value.open_by_key.return_value = _mock_spreadsheet(worksheet)
+
+    assert _sync_marcar_alerta_presupuesto("id", "50670000000", "Alimentación", 80, "2026-11")
+    worksheet.update_cell.assert_called_once_with(2, 5, "2026-11")
+
+
+@patch("services.sheets_service.get_sheets_client")
 def test_leer_preferencia_resumen(mock_client) -> None:
     worksheet = MagicMock()
     worksheet.col_values.return_value = ["telefono", "50670000000"]

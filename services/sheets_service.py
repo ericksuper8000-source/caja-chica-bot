@@ -729,6 +729,21 @@ def _fila_presupuesto(row: list[str]) -> dict[str, str]:
     }
 
 
+def _normalizar_categoria_sheet(valor: str) -> str:
+    """Normaliza categorías para comparar (minúsculas y sin tildes)."""
+    texto = str(valor).strip().lower()
+    for origen, destino in (
+        ("á", "a"),
+        ("é", "e"),
+        ("í", "i"),
+        ("ó", "o"),
+        ("ú", "u"),
+        ("ü", "u"),
+    ):
+        texto = texto.replace(origen, destino)
+    return texto
+
+
 def _sync_leer_presupuestos(spreadsheet_id: str) -> list[dict[str, str]]:
     """Lee todas las filas de presupuestos (sin el encabezado)."""
     worksheet = _sync_get_presupuestos_worksheet(spreadsheet_id)
@@ -749,10 +764,9 @@ def _sync_guardar_presupuesto(
     for numero, row in enumerate(filas[1:], start=2):
         if not row:
             continue
-        if (
-            str(row[0]).strip() == telefono
-            and str(row[1]).strip().lower() == categoria.strip().lower()
-        ):
+        if str(row[0]).strip() == telefono and _normalizar_categoria_sheet(
+            row[1]
+        ) == _normalizar_categoria_sheet(categoria):
             worksheet.update_cell(numero, 3, limite)
             worksheet.update_cell(numero, 7, ahora)
             return True
@@ -770,10 +784,9 @@ def _sync_eliminar_presupuesto(spreadsheet_id: str, telefono: str, categoria: st
     for numero, row in enumerate(filas[1:], start=2):
         if not row:
             continue
-        if (
-            str(row[0]).strip() == telefono
-            and str(row[1]).strip().lower() == categoria.strip().lower()
-        ):
+        if str(row[0]).strip() == telefono and _normalizar_categoria_sheet(
+            row[1]
+        ) == _normalizar_categoria_sheet(categoria):
             worksheet.delete_rows(numero)
             return True
     return False
@@ -789,10 +802,9 @@ def _sync_marcar_alerta_presupuesto(
     for numero, row in enumerate(filas[1:], start=2):
         if not row:
             continue
-        if (
-            str(row[0]).strip() == telefono
-            and str(row[1]).strip().lower() == categoria.strip().lower()
-        ):
+        if str(row[0]).strip() == telefono and _normalizar_categoria_sheet(
+            row[1]
+        ) == _normalizar_categoria_sheet(categoria):
             worksheet.update_cell(numero, columna, periodo)
             return True
     return False
