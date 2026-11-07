@@ -160,20 +160,117 @@ async def verificar_y_alertar_presupuesto(
     return None
 
 
+_NUMEROS_PALABRA = {
+    "cero": 0,
+    "un": 1,
+    "uno": 1,
+    "una": 1,
+    "dos": 2,
+    "tres": 3,
+    "cuatro": 4,
+    "cinco": 5,
+    "seis": 6,
+    "siete": 7,
+    "ocho": 8,
+    "nueve": 9,
+    "diez": 10,
+    "once": 11,
+    "doce": 12,
+    "trece": 13,
+    "catorce": 14,
+    "quince": 15,
+    "dieciseis": 16,
+    "diecisiete": 17,
+    "dieciocho": 18,
+    "diecinueve": 19,
+    "veinte": 20,
+    "veintiuno": 21,
+    "veintiun": 21,
+    "veintidos": 22,
+    "veintitres": 23,
+    "veinticuatro": 24,
+    "veinticinco": 25,
+    "veintiseis": 26,
+    "veintisiete": 27,
+    "veintiocho": 28,
+    "veintinueve": 29,
+    "treinta": 30,
+    "cuarenta": 40,
+    "cincuenta": 50,
+    "sesenta": 60,
+    "setenta": 70,
+    "ochenta": 80,
+    "noventa": 90,
+    "cien": 100,
+    "ciento": 100,
+    "doscientos": 200,
+    "trescientos": 300,
+    "cuatrocientos": 400,
+    "quinientos": 500,
+    "seiscientos": 600,
+    "setecientos": 700,
+    "ochocientos": 800,
+    "novecientos": 900,
+}
+
+_PALABRAS_IGNORADAS = frozenset(
+    {"y", "de", "del", "para", "en", "colones", "colon", "pesos", "peso"}
+)
+
+
+def _sin_tildes(texto: str) -> str:
+    return (
+        texto.lower()
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+        .replace("ü", "u")
+    )
+
+
+def _palabras_a_numero(texto: str) -> int | None:
+    """Convierte montos dichos con palabras: 'veinte mil', 'cien mil', 'un millón'."""
+    palabras = _sin_tildes(texto).replace("-", " ").split()
+    if not palabras:
+        return None
+    total = 0
+    actual = 0
+    visto = False
+    for palabra in palabras:
+        if palabra in _PALABRAS_IGNORADAS:
+            continue
+        if palabra == "mil":
+            total += (actual or 1) * 1000
+            actual = 0
+            visto = True
+        elif palabra in ("millon", "millones"):
+            total += (actual or 1) * 1_000_000
+            actual = 0
+            visto = True
+        elif palabra in _NUMEROS_PALABRA:
+            actual += _NUMEROS_PALABRA[palabra]
+            visto = True
+        else:
+            return None
+    return total + actual if visto else None
+
+
 def _parsear_monto(valor: str) -> int | None:
-    """Interpreta montos dichos/escritos: '20000', '20.000', '20,000', '20 mil'."""
+    """Interpreta montos dichos/escritos: '20000', '20.000', '20 mil', 'veinte mil'."""
     limpio = valor.lower().strip().replace("₡", "")
     for sufijo in ("colones", "colon", "colón"):
         if limpio.endswith(sufijo):
             limpio = limpio[: -len(sufijo)].strip()
-    limpio = limpio.replace(".", "").replace(",", "").replace(" ", "")
+    solo_digitos = limpio.replace(".", "").replace(",", "").replace(" ", "")
     multiplicador = 1
-    if limpio.endswith("mil"):
+    if solo_digitos.endswith("mil"):
         multiplicador = 1000
-        limpio = limpio[:-3]
-    if not limpio.isdigit():
-        return None
-    return int(limpio) * multiplicador
+        solo_digitos = solo_digitos[:-3]
+    if solo_digitos.isdigit():
+        return int(solo_digitos) * multiplicador
+    return _palabras_a_numero(limpio)
 
 
 def detectar_presupuesto(texto: str) -> tuple[str, int] | None:
@@ -193,7 +290,8 @@ def detectar_presupuesto(texto: str) -> tuple[str, int] | None:
 
     resto = t[len("presupuesto") :].strip()
     palabras = resto.split()
-    while palabras and palabras[0] in ("de", "del", "para"):
+    relleno = {"de", "del", "para", "el", "la", "los", "las", "un", "una", "mi", "mis"}
+    while palabras and palabras[0] in relleno:
         palabras.pop(0)
     if len(palabras) < 2:
         return None
@@ -228,7 +326,7 @@ def detectar_presupuesto(texto: str) -> tuple[str, int] | None:
         "tecnologia": "tecnologia",
         "otros": "otros",
     }
-    cat_norm = categoria_raw.lower().strip()
+    cat_norm = _normalizar_categoria(categoria_raw)
     categoria = sinónimos.get(cat_norm, cat_norm)
 
     return (categoria, limite)

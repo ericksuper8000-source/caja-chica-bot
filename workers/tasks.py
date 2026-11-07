@@ -407,6 +407,7 @@ async def _procesar_presupuesto(sender_phone: str, transcripcion: str) -> bool:
     # Si claramente quiso fijar un presupuesto pero no se pudo leer el monto
     # (típico de transcripciones), no caemos al mensaje genérico de "no es un gasto".
     if " ".join(transcripcion.lower().split()).startswith("presupuesto"):
+        logger.info("presupuesto: intención detectada pero monto ilegible.")
         await enviar_mensaje_whatsapp(
             to_phone=sender_phone,
             mensaje=(
