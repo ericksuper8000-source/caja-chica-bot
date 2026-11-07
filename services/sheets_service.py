@@ -8,6 +8,7 @@ from gspread.utils import ValueInputOption  # Importamos el enumerado para el ti
 
 from app.config import settings
 from services.politica_service import POLITICA_VERSION
+from services.suscripcion_service import ESTADOS_CON_ACCESO
 
 logger = logging.getLogger(__name__)
 
@@ -427,16 +428,21 @@ def _sync_migrar_suscripcion(
     Operación síncrona (deuda #17): muda el control comercial al cambiar de número.
     - Si el número viejo no tiene fila en `Suscripciones`: no se crea nada
       ('sin_suscripcion').
-    - Si el número nuevo ya tiene fila propia: no se duplica ('nuevo_ya_tiene').
-    - En ambos casos con fila vieja, se marca su estado como `cancelado` para
-      revocar el acceso del número anterior (el bot solo lee esta pestaña).
-    Retorna: 'migrada', 'sin_suscripcion' o 'nuevo_ya_tiene'.
+    - Si la ÚLTIMA fila del número nuevo tiene acceso (activo/gratis/de_prueba): no
+      se duplica ('nuevo_ya_tiene').
+    - Si el número nuevo no tiene fila: se copia la del viejo ('migrada').
+    - Si la última fila del número nuevo existe pero NO tiene acceso (p. ej. quedó
+      `cancelado` de un cambio anterior), se agrega una fila nueva copiando la del
+      viejo ('reactivada'): cambiar de número no debe dejar al usuario sin acceso.
+    En todos los casos con fila vieja se marca su estado como `cancelado` para
+    revocar el acceso del número anterior (el bot solo lee esta pestaña).
+    Retorna: 'migrada', 'reactivada', 'sin_suscripcion' o 'nuevo_ya_tiene'.
     """
     worksheet = _sync_get_suscripciones_worksheet(spreadsheet_id)
     filas = worksheet.get_all_values()
     fila_vieja: list[str] | None = None
     fila_vieja_numero = 0
-    nuevo_tiene_fila = False
+    fila_nueva: list[str] | None = None
     for numero, row in enumerate(filas, start=1):
         if not row:
             continue
@@ -445,11 +451,14 @@ def _sync_migrar_suscripcion(
             fila_vieja = row
             fila_vieja_numero = numero
         elif telefono == telefono_nuevo:
-            nuevo_tiene_fila = True
+            fila_nueva = row
     if fila_vieja is None:
         return "sin_suscripcion"
 
-    if nuevo_tiene_fila:
+    estado_nuevo = ""
+    if fila_nueva is not None and len(fila_nueva) > 2:
+        estado_nuevo = str(fila_nueva[2]).strip().lower()
+    if fila_nueva is not None and estado_nuevo in ESTADOS_CON_ACCESO:
         resultado = "nuevo_ya_tiene"
     else:
         fila_migrada = [telefono_nuevo] + [
@@ -460,7 +469,7 @@ def _sync_migrar_suscripcion(
             fila_migrada,
             value_input_option=ValueInputOption.user_entered,
         )
-        resultado = "migrada"
+        resultado = "reactivada" if fila_nueva is not None else "migrada"
 
     estado_viejo = str(fila_vieja[2]).strip().lower() if len(fila_vieja) > 2 else ""
     if estado_viejo != "cancelado":
@@ -471,9 +480,10 @@ def _sync_migrar_suscripcion(
 async def migrar_suscripcion(telefono_anterior: str, telefono_nuevo: str) -> str | None:
     """
     Muda el control comercial al cambiar de número (deuda #17): copia la fila de
-    `Suscripciones` al número nuevo (solo si no tiene una) y revoca el acceso del
-    número anterior marcándolo `cancelado`. Retorna 'migrada', 'sin_suscripcion' o
-    'nuevo_ya_tiene'; None si hubo un error (el pipeline lo registra y avisa).
+    `Suscripciones` al número nuevo (salvo que su última fila tenga acceso) y revoca
+    el acceso del número anterior marcándolo `cancelado`. Retorna 'migrada',
+    'reactivada', 'sin_suscripcion' o 'nuevo_ya_tiene'; None si hubo un error (el
+    pipeline lo registra y avisa).
     """
     spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
     try:

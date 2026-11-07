@@ -191,6 +191,53 @@ async def test_migrar_suscripcion_nuevo_ya_tiene_no_duplica(mock_get_sheets_clie
 
 @patch("services.sheets_service.get_sheets_client")
 @pytest.mark.anyio
+async def test_migrar_suscripcion_reactiva_fila_cancelada_del_nuevo(
+    mock_get_sheets_client,
+) -> None:
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+    mock_worksheet.get_all_values.return_value = [
+        ["telefono", "plan", "estado", "fecha_inicio", "fecha_renovacion", "ultimo_pago"],
+        ["50688888888", "piloto", "de_prueba", "2026-10-18", "", ""],
+        ["50670000000", "piloto", "cancelado", "2026-09-01", "", ""],
+    ]
+
+    assert await migrar_suscripcion("50688888888", "50670000000") == "reactivada"
+    mock_worksheet.append_row.assert_called_once()
+    fila = mock_worksheet.append_row.call_args.args[0]
+    assert fila[:3] == ["50670000000", "piloto", "de_prueba"]
+    mock_worksheet.update_cell.assert_called_once_with(2, 3, "cancelado")
+
+
+@patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
+async def test_migrar_suscripcion_usa_ultima_fila_del_nuevo(
+    mock_get_sheets_client,
+) -> None:
+    mock_client = MagicMock()
+    mock_spreadsheet = MagicMock()
+    mock_worksheet = MagicMock()
+    mock_get_sheets_client.return_value = mock_client
+    mock_client.open_by_key.return_value = mock_spreadsheet
+    mock_spreadsheet.worksheet.return_value = mock_worksheet
+    mock_worksheet.get_all_values.return_value = [
+        ["telefono", "plan", "estado", "fecha_inicio", "fecha_renovacion", "ultimo_pago"],
+        ["50688888888", "piloto", "de_prueba", "2026-10-18", "", ""],
+        ["50670000000", "piloto", "cancelado", "2026-09-01", "", ""],
+        ["50670000000", "piloto", "activo", "2026-11-01", "", ""],
+    ]
+
+    assert await migrar_suscripcion("50688888888", "50670000000") == "nuevo_ya_tiene"
+    mock_worksheet.append_row.assert_not_called()
+    mock_worksheet.update_cell.assert_called_once_with(2, 3, "cancelado")
+
+
+@patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
 async def test_renombrar_pestana_cliente(mock_get_sheets_client) -> None:
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()

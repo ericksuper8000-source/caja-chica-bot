@@ -538,6 +538,12 @@ async def _procesar_pipeline(
                     "cambio_numero: el número nuevo %s ya tenía suscripción; no se duplicó",
                     sender_phone,
                 )
+            elif estado_suscripcion == "reactivada":
+                logger.info(
+                    "cambio_numero: fila cancelada del número nuevo %s reactivada desde %s",
+                    sender_phone,
+                    telefono_anterior,
+                )
             await enviar_mensaje_whatsapp(
                 to_phone=sender_phone, mensaje=TEXTO_CAMBIO_NUMERO_CONFIRMADO
             )
