@@ -428,6 +428,7 @@ async def test_append_transaction_api_error(mock_get_sheets_client):
     assert result is False
 
 
+@pytest.mark.anyio
 @patch("services.sheets_service.get_sheets_client")
 async def test_upsert_usuario_crea_fila(mock_get_sheets_client):
     mock_client = MagicMock()
@@ -464,6 +465,7 @@ async def test_upsert_usuario_crea_fila(mock_get_sheets_client):
     mock_worksheet.update.assert_not_called()
 
 
+@pytest.mark.anyio
 @patch("services.sheets_service.get_sheets_client")
 async def test_upsert_usuario_actualiza_fila_existente(mock_get_sheets_client):
     mock_client = MagicMock()
@@ -484,10 +486,12 @@ async def test_upsert_usuario_actualiza_fila_existente(mock_get_sheets_client):
     mock_worksheet.append_row.assert_not_called()
 
 
+@pytest.mark.anyio
 async def test_upsert_usuario_sin_telefono():
     assert await upsert_usuario({"tipo_uso": "personal"}) is False
 
 
+@pytest.mark.anyio
 @patch("services.sheets_service.get_sheets_client")
 async def test_obtener_usuario_existente(mock_get_sheets_client):
     mock_client = MagicMock()
@@ -518,6 +522,7 @@ async def test_obtener_usuario_existente(mock_get_sheets_client):
     assert list(usuario.keys()) == USUARIOS_HEADERS
 
 
+@pytest.mark.anyio
 @patch("services.sheets_service.get_sheets_client")
 async def test_obtener_usuario_inexistente(mock_get_sheets_client):
     mock_client = MagicMock()

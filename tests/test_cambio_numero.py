@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import gspread
+import pytest
 
 from services.numero_service import (
     TEXTO_CAMBIO_NUMERO_CONFIRMADO,
@@ -43,6 +44,7 @@ def test_detectar_recuperacion_manual() -> None:
     assert detectar_recuperacion_manual("hola") is False
 
 
+@pytest.mark.anyio
 async def test_crear_y_verificar_codigo(redis_aislado) -> None:
     codigo = await crear_codigo_cambio("50688888888")
     assert codigo is not None
@@ -55,6 +57,7 @@ async def test_crear_y_verificar_codigo(redis_aislado) -> None:
     assert await verificar_codigo_cambio("50688888888", codigo) is False
 
 
+@pytest.mark.anyio
 async def test_verificar_codigo_incorrecto_conserva_codigo(redis_aislado) -> None:
     codigo = await crear_codigo_cambio("50688888888")
     assert codigo is not None
@@ -63,6 +66,7 @@ async def test_verificar_codigo_incorrecto_conserva_codigo(redis_aislado) -> Non
     assert clave_cambio_numero("50688888888") in redis_aislado.store
 
 
+@pytest.mark.anyio
 async def test_verificar_codigo_bloquea_tras_intentos(redis_aislado) -> None:
     codigo = await crear_codigo_cambio("50688888888")
     assert codigo is not None
@@ -72,11 +76,13 @@ async def test_verificar_codigo_bloquea_tras_intentos(redis_aislado) -> None:
     assert clave_cambio_numero("50688888888") not in redis_aislado.store
 
 
+@pytest.mark.anyio
 async def test_verificar_codigo_sin_solicitud() -> None:
     assert await verificar_codigo_cambio("50688888888", "123456") is False
 
 
 @patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
 async def test_actualizar_telefono_usuario(mock_get_sheets_client) -> None:
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
@@ -91,6 +97,7 @@ async def test_actualizar_telefono_usuario(mock_get_sheets_client) -> None:
 
 
 @patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
 async def test_actualizar_telefono_usuario_inexistente(mock_get_sheets_client) -> None:
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
@@ -105,6 +112,7 @@ async def test_actualizar_telefono_usuario_inexistente(mock_get_sheets_client) -
 
 
 @patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
 async def test_actualizar_telefono_usuario_destino_existe(mock_get_sheets_client) -> None:
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
@@ -118,6 +126,7 @@ async def test_actualizar_telefono_usuario_destino_existe(mock_get_sheets_client
 
 
 @patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
 async def test_renombrar_pestana_cliente(mock_get_sheets_client) -> None:
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
@@ -134,6 +143,7 @@ async def test_renombrar_pestana_cliente(mock_get_sheets_client) -> None:
 
 
 @patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
 async def test_renombrar_pestana_origen_inexistente(mock_get_sheets_client) -> None:
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
@@ -148,6 +158,7 @@ async def test_renombrar_pestana_origen_inexistente(mock_get_sheets_client) -> N
 
 
 @patch("services.sheets_service.get_sheets_client")
+@pytest.mark.anyio
 async def test_renombrar_pestana_destino_existe(mock_get_sheets_client) -> None:
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
@@ -158,6 +169,7 @@ async def test_renombrar_pestana_destino_existe(mock_get_sheets_client) -> None:
     assert await renombrar_pestana_cliente("50688888888", "50670000000") is False
 
 
+@pytest.mark.anyio
 async def test_pipeline_confirma_cambio_numero() -> None:
     with (
         patch("workers.tasks.verificar_codigo_cambio", return_value=True) as mock_verif,
@@ -184,6 +196,7 @@ async def test_pipeline_confirma_cambio_numero() -> None:
     )
 
 
+@pytest.mark.anyio
 async def test_pipeline_cambio_codigo_invalido() -> None:
     with (
         patch("workers.tasks.verificar_codigo_cambio", return_value=False),
@@ -199,6 +212,7 @@ async def test_pipeline_cambio_codigo_invalido() -> None:
     )
 
 
+@pytest.mark.anyio
 async def test_pipeline_cambio_mismo_numero_invalido() -> None:
     with (
         patch("workers.tasks.verificar_codigo_cambio") as mock_verif,
@@ -215,6 +229,7 @@ async def test_pipeline_cambio_mismo_numero_invalido() -> None:
     )
 
 
+@pytest.mark.anyio
 async def test_pipeline_inicia_cambio_numero() -> None:
     with (
         patch(
@@ -235,6 +250,7 @@ async def test_pipeline_inicia_cambio_numero() -> None:
     )
 
 
+@pytest.mark.anyio
 async def test_pipeline_recuperacion_manual() -> None:
     with (
         patch(

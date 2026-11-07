@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+import pytest
+
 from services.onboarding_service import (
     CONTEXTO_DEFECTO,
     PASO_CATEGORIAS,
@@ -57,6 +59,7 @@ def test_texto_tipo_uso_incluye_ejemplos() -> None:
     assert "tienda" in TEXTO_ONBOARDING_TIPO_USO
 
 
+@pytest.mark.anyio
 async def test_guardar_y_obtener_paso(redis_aislado) -> None:
     assert await guardar_paso("50688888888", PASO_TIPO_USO) is True
     estado = await obtener_paso("50688888888")
@@ -66,27 +69,32 @@ async def test_guardar_y_obtener_paso(redis_aislado) -> None:
     assert await obtener_paso("50688888888") is None
 
 
+@pytest.mark.anyio
 async def test_responder_paso_onboarding_ignora_otros_pasos() -> None:
     with patch("workers.tasks.obtener_paso", return_value={"paso": "desconocido"}):
         assert await _responder_paso_onboarding("50688888888", "negocio") is None
 
 
+@pytest.mark.anyio
 async def test_responder_paso_onboarding_reintenta_si_no_entiende() -> None:
     with patch("workers.tasks.obtener_paso", return_value={"paso": "tipo_uso"}):
         respuesta = await _responder_paso_onboarding("50688888888", "hola")
     assert respuesta == TEXTO_ONBOARDING_TIPO_USO_REINTENTO
 
 
+@pytest.mark.anyio
 async def test_responder_paso_onboarding_deja_pasar_movimiento() -> None:
     with patch("workers.tasks.obtener_paso", return_value={"paso": "tipo_uso"}):
         assert await _responder_paso_onboarding("50688888888", "gaste 5000 en el almuerzo") is None
 
 
+@pytest.mark.anyio
 async def test_responder_paso_onboarding_no_se_traga_arco() -> None:
     with patch("workers.tasks.obtener_paso", return_value={"paso": "tipo_uso"}):
         assert await _responder_paso_onboarding("50688888888", "darme de baja") is None
 
 
+@pytest.mark.anyio
 async def test_pipeline_con_tipo_uso_continua_onboarding() -> None:
     with (
         patch(
@@ -105,6 +113,7 @@ async def test_pipeline_con_tipo_uso_continua_onboarding() -> None:
     mock_whatsapp.assert_called_once_with(to_phone="50688888888", mensaje=TEXTO_ONBOARDING_ESPACIO)
 
 
+@pytest.mark.anyio
 async def test_espacio_guarda_nombre_y_pasa_a_contexto() -> None:
     with (
         patch(
@@ -124,22 +133,26 @@ async def test_espacio_guarda_nombre_y_pasa_a_contexto() -> None:
     )
 
 
+@pytest.mark.anyio
 async def test_espacio_reintenta_si_nombre_invalido() -> None:
     with patch("workers.tasks.obtener_paso", return_value={"paso": "espacio"}):
         respuesta = await _responder_paso_onboarding("50688888888", "   ")
     assert respuesta == TEXTO_ONBOARDING_ESPACIO_REINTENTO
 
 
+@pytest.mark.anyio
 async def test_espacio_deja_pasar_movimiento() -> None:
     with patch("workers.tasks.obtener_paso", return_value={"paso": "espacio"}):
         assert await _responder_paso_onboarding("50688888888", "gasté 5000 en café") is None
 
 
+@pytest.mark.anyio
 async def test_espacio_no_se_traga_arco() -> None:
     with patch("workers.tasks.obtener_paso", return_value={"paso": "espacio"}):
         assert await _responder_paso_onboarding("50688888888", "darme de baja") is None
 
 
+@pytest.mark.anyio
 async def test_pipeline_espacio_pasa_a_contexto() -> None:
     with (
         patch(
@@ -182,6 +195,7 @@ def test_detectar_contexto() -> None:
     assert detectar_contexto("") is None
 
 
+@pytest.mark.anyio
 async def test_contexto_guarda_defaults() -> None:
     with (
         patch(
@@ -205,6 +219,7 @@ async def test_contexto_guarda_defaults() -> None:
     )
 
 
+@pytest.mark.anyio
 async def test_contexto_detecta_pais() -> None:
     with (
         patch("workers.tasks.obtener_paso", return_value={"paso": "contexto"}),
@@ -217,22 +232,26 @@ async def test_contexto_detecta_pais() -> None:
     assert mock_guardar.call_args.args[1] == PASO_CATEGORIAS
 
 
+@pytest.mark.anyio
 async def test_contexto_reintenta_si_no_entiende() -> None:
     with patch("workers.tasks.obtener_paso", return_value={"paso": "contexto"}):
         respuesta = await _responder_paso_onboarding("50688888888", "no sé")
     assert respuesta == TEXTO_ONBOARDING_CONTEXTO_REINTENTO
 
 
+@pytest.mark.anyio
 async def test_contexto_deja_pasar_movimiento() -> None:
     with patch("workers.tasks.obtener_paso", return_value={"paso": "contexto"}):
         assert await _responder_paso_onboarding("50688888888", "gasté 5000 en café") is None
 
 
+@pytest.mark.anyio
 async def test_contexto_no_se_traga_arco() -> None:
     with patch("workers.tasks.obtener_paso", return_value={"paso": "contexto"}):
         assert await _responder_paso_onboarding("50688888888", "darme de baja") is None
 
 
+@pytest.mark.anyio
 async def test_pipeline_contexto_confirma() -> None:
     with (
         patch(
@@ -303,6 +322,7 @@ def test_procesar_categorias_invalido() -> None:
     assert procesar_categorias("hola", "personal") is None
 
 
+@pytest.mark.anyio
 async def test_categorias_guarda_y_pasa_a_primer_movimiento() -> None:
     with (
         patch(
@@ -328,6 +348,7 @@ async def test_categorias_guarda_y_pasa_a_primer_movimiento() -> None:
     )
 
 
+@pytest.mark.anyio
 async def test_categorias_reintenta_si_no_entiende() -> None:
     with patch(
         "workers.tasks.obtener_paso", return_value={"paso": "categorias", "tipo_uso": "personal"}
@@ -336,6 +357,7 @@ async def test_categorias_reintenta_si_no_entiende() -> None:
     assert respuesta == TEXTO_ONBOARDING_CATEGORIAS_REINTENTO
 
 
+@pytest.mark.anyio
 async def test_categorias_deja_pasar_movimiento() -> None:
     with patch(
         "workers.tasks.obtener_paso", return_value={"paso": "categorias", "tipo_uso": "personal"}
@@ -343,6 +365,7 @@ async def test_categorias_deja_pasar_movimiento() -> None:
         assert await _responder_paso_onboarding("50688888888", "gasté 5000 en café") is None
 
 
+@pytest.mark.anyio
 async def test_categorias_no_se_traga_arco() -> None:
     with patch(
         "workers.tasks.obtener_paso", return_value={"paso": "categorias", "tipo_uso": "personal"}
@@ -350,6 +373,7 @@ async def test_categorias_no_se_traga_arco() -> None:
         assert await _responder_paso_onboarding("50688888888", "darme de baja") is None
 
 
+@pytest.mark.anyio
 async def test_pipeline_categorias_confirma() -> None:
     with (
         patch(
@@ -399,6 +423,7 @@ def test_texto_resumen_onboarding_sin_movimiento() -> None:
     assert TEXTO_ONBOARDING_RESUMEN_SIN_MOVIMIENTO in texto
 
 
+@pytest.mark.anyio
 async def test_primer_movimiento_saltar_cierra_alta() -> None:
     with (
         patch(
@@ -419,6 +444,7 @@ async def test_primer_movimiento_saltar_cierra_alta() -> None:
     assert mock_usuario.call_args.args[0]["espacio"] == "Mi Tienda"
 
 
+@pytest.mark.anyio
 async def test_primer_movimiento_deja_pasar_movimiento() -> None:
     with patch(
         "workers.tasks.obtener_paso",
@@ -427,6 +453,7 @@ async def test_primer_movimiento_deja_pasar_movimiento() -> None:
         assert await _responder_paso_onboarding("50688888888", "gasté 2000 en café") is None
 
 
+@pytest.mark.anyio
 async def test_primer_movimiento_no_se_traga_arco() -> None:
     with patch(
         "workers.tasks.obtener_paso",
@@ -435,6 +462,7 @@ async def test_primer_movimiento_no_se_traga_arco() -> None:
         assert await _responder_paso_onboarding("50688888888", "darme de baja") is None
 
 
+@pytest.mark.anyio
 async def test_finalizar_onboarding_guarda_completado() -> None:
     with (
         patch(
@@ -458,6 +486,7 @@ async def test_finalizar_onboarding_guarda_completado() -> None:
     assert mock_usuario.call_args.args[0]["moneda"] == "CRC"
 
 
+@pytest.mark.anyio
 async def test_finalizar_onboarding_fuera_de_paso() -> None:
     with patch("workers.tasks.obtener_paso", return_value={"paso": "completado"}):
         assert (
@@ -468,6 +497,7 @@ async def test_finalizar_onboarding_fuera_de_paso() -> None:
         )
 
 
+@pytest.mark.anyio
 async def test_pipeline_primer_movimiento_resume() -> None:
     with (
         patch(
