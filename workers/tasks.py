@@ -12,6 +12,39 @@ import httpx
 import redis.asyncio as aioredis
 
 from app.config import settings
+from services.a08_service import (
+    MAX_HISTORIAL,
+    TEXTO_BORRADO_CANCELADO,
+    TEXTO_BORRADO_DUDA,
+    TEXTO_BORRADO_ERROR,
+    TEXTO_BORRADO_NO_ENCONTRADO,
+    TEXTO_BORRADO_OK,
+    TEXTO_BORRADO_SIN_MOVIMIENTOS,
+    TEXTO_DESHECHO_BORRADO,
+    TEXTO_DESHECHO_CORRECCION,
+    TEXTO_DESHECHO_CREACION,
+    TEXTO_DESHECHO_ERROR,
+    TEXTO_DESHECHO_REACTIVACION,
+    TEXTO_NADA_QUE_DESHACER,
+    TEXTO_REACTIVADO,
+    TEXTO_REACTIVAR_ERROR,
+    TEXTO_REACTIVAR_SIN_ANULADOS,
+    TEXTO_SELECCION_INVALIDA,
+    TTL_A08_SEGUNDOS,
+    SolicitudBorrado,
+    detectar_confirmacion_borrado,
+    detectar_deshacer,
+    detectar_historial,
+    detectar_intencion_correccion,
+    detectar_reactivar,
+    detectar_solicitud_borrado,
+    formatear_confirmacion_movimiento,
+    formatear_historial,
+    formatear_lista_borrado,
+    formatear_prompt_borrado,
+    indice_seleccionado,
+    snapshot_movimiento,
+)
 from services.backup_service import crear_backup
 from services.consulta_service import (
     ConsultaCategoria,
@@ -40,6 +73,15 @@ from services.duplicado_service import (
     es_mismo_reenvio,
     hash_transaccion,
 )
+from services.export_service import (
+    MIME_CSV,
+    MIME_XLSX,
+    TEXTO_EXPORTACION_DOCUMENTO,
+    FormatoExport,
+    generar_exportacion,
+    nombre_exportacion,
+)
+from services.modelo_service import monto_con_signo
 from services.numero_service import (
     TEXTO_CAMBIO_NUMERO_CONFIRMADO,
     TEXTO_CAMBIO_NUMERO_CONFLICTO,
@@ -125,15 +167,22 @@ from services.reporte_service import (
     texto_sin_movimientos,
 )
 from services.sheets_service import (
+    MovimientoAnuladoError,
     actualizar_telefono_usuario,
+    anular_movimiento,
     append_transaction_to_sheet,
     migrar_suscripcion,
     obtener_consentimiento,
+    obtener_historial,
+    obtener_movimientos_cliente,
     obtener_suscripcion,
     obtener_telefonos_con_acceso,
     obtener_transacciones_cliente,
+    reactivar_movimiento,
     registrar_consentimiento,
     renombrar_pestana_cliente,
+    restaurar_movimiento,
+    revertir_movimiento,
     update_last_transaction_to_sheet,
     upsert_usuario,
 )
@@ -143,6 +192,7 @@ from services.suscripcion_service import (
 )
 from services.whatsapp_service import (
     dividir_mensaje_largo,
+    enviar_documento_whatsapp,
     enviar_imagen_whatsapp,
     enviar_mensaje_whatsapp,
 )
@@ -274,15 +324,335 @@ async def _es_duplicado(
 
 async def _guardar_transaccion_o_avisar(
     transaction_data: dict[str, Any], sender_phone: str
-) -> bool:
+) -> dict[str, Any] | None:
+    """
+    Guarda el movimiento y devuelve el snapshot canónico (con ID) o None si falló.
+
+    Los dobles de prueba antiguos que devuelven `True` se normalizan a `{}`: el flujo
+    sigue funcionando, pero sin datos para A08 (no hay ID que deshacer).
+    """
     guardado = await append_transaction_to_sheet(transaction_data, sender_phone)
-    if guardado:
-        return True
-    logger.error(
-        "Sheets: no se pudo guardar la transacción de %s; no se confirma ni se marca dedupe.",
-        sender_phone,
+    if not guardado:
+        logger.error(
+            "Sheets: no se pudo guardar la transacción de %s; no se confirma ni se marca dedupe.",
+            sender_phone,
+        )
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_ERROR_GUARDADO)
+        return None
+    if isinstance(guardado, dict):
+        return guardado
+    return {}
+
+
+# ==========================================
+# A08 — BORRADO LÓGICO, DESHACER E HISTORIAL (D23/D24/D25)
+# ==========================================
+CLAVE_A08_ULTIMA = "a08:last:{}"
+CLAVE_A08_BORRADO = "a08:borrado:{}"
+
+
+async def _a08_leer(clave: str) -> dict[str, Any] | None:
+    """Lee un estado A08 de Redis; ante cualquier fallo degrada a "sin estado"."""
+    try:
+        r = await _dedupe_redis()
+        try:
+            crudo = await r.get(clave)
+        finally:
+            await r.aclose()
+        if not crudo:
+            return None
+        if isinstance(crudo, bytes):
+            crudo = crudo.decode("utf-8")
+        return json.loads(crudo)  # type: ignore[no-any-return]
+    except Exception as exc:  # noqa: BLE001 - perder el estado A08 no bloquea el flujo
+        logger.warning("a08: no se pudo leer %s (%s)", clave, exc)
+        return None
+
+
+async def _a08_guardar(clave: str, valor: dict[str, Any]) -> None:
+    """Guarda un estado A08 con la ventana de 10 minutos (D23)."""
+    try:
+        r = await _dedupe_redis()
+        try:
+            await r.set(clave, json.dumps(valor, default=str), ex=TTL_A08_SEGUNDOS)
+        finally:
+            await r.aclose()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("a08: no se pudo guardar %s (%s)", clave, exc)
+
+
+async def _a08_borrar(clave: str) -> None:
+    try:
+        r = await _dedupe_redis()
+        try:
+            await r.delete(clave)
+        finally:
+            await r.aclose()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("a08: no se pudo borrar %s (%s)", clave, exc)
+
+
+async def _recordar_ultima_accion(
+    sender_phone: str,
+    accion: str,
+    movimiento_id: str,
+    antes: dict[str, Any] | None,
+    despues: dict[str, Any] | None,
+) -> None:
+    """Snapshot mínimo de la última acción para el deshacer de un solo paso (D23)."""
+    if not movimiento_id:
+        return
+    await _a08_guardar(
+        CLAVE_A08_ULTIMA.format(sender_phone),
+        {
+            "accion": accion,
+            "movimiento_id": movimiento_id,
+            "antes": snapshot_movimiento(antes) if isinstance(antes, dict) else None,
+            "despues": snapshot_movimiento(despues) if isinstance(despues, dict) else None,
+            "ts": int(time.time()),
+        },
     )
-    await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_ERROR_GUARDADO)
+
+
+async def _a08_deshacer(sender_phone: str, ultima: dict[str, Any] | None) -> None:
+    """Deshace la última acción registrada; si falla, conserva el estado para reintentar."""
+    clave = CLAVE_A08_ULTIMA.format(sender_phone)
+    if not ultima:
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_NADA_QUE_DESHACER)
+        return
+
+    accion = str(ultima.get("accion") or "")
+    movimiento_id = str(ultima.get("movimiento_id") or "")
+    antes_crudo = ultima.get("antes")
+    antes: dict[str, Any] = antes_crudo if isinstance(antes_crudo, dict) else {}
+
+    resultado: dict[str, Any] | None = None
+    mensaje = TEXTO_DESHECHO_ERROR
+    if accion == "crear" and movimiento_id:
+        resultado = await anular_movimiento(
+            sender_phone, movimiento_id, "deshacer registro", accion="deshacer"
+        )
+        mensaje = TEXTO_DESHECHO_CREACION
+    elif accion == "corregir" and movimiento_id and antes:
+        resultado = await revertir_movimiento(sender_phone, movimiento_id, antes)
+        mensaje = TEXTO_DESHECHO_CORRECCION
+    elif accion in {"anular", "reactivar"} and movimiento_id:
+        estado_previo = str(antes.get("estado") or "confirmado")
+        resultado = await restaurar_movimiento(sender_phone, movimiento_id, estado_previo)
+        mensaje = TEXTO_DESHECHO_BORRADO if accion == "anular" else TEXTO_DESHECHO_REACTIVACION
+
+    if resultado is None:
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_DESHECHO_ERROR)
+        return
+
+    # Deshacer no salta más de un paso: se consume para que no se pueda re-deshacer.
+    await _a08_borrar(clave)
+    await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=mensaje)
+
+
+async def _a08_reactivar(sender_phone: str) -> None:
+    """Reactiva el último movimiento anulado (A08 §5.5, acción `reactivar`)."""
+    movimientos = await obtener_movimientos_cliente(sender_phone, incluir_inactivos=True)
+    anulados = [m for m in movimientos if str(m.get("estado")) == "anulado"]
+    if not anulados:
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_REACTIVAR_SIN_ANULADOS)
+        return
+
+    objetivo = anulados[-1]
+    movimiento_id = str(objetivo.get("movimiento_id") or "")
+    resultado = await reactivar_movimiento(sender_phone, movimiento_id)
+    if resultado is None:
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_REACTIVAR_ERROR)
+        return
+
+    await _recordar_ultima_accion(
+        sender_phone,
+        "reactivar",
+        movimiento_id,
+        resultado.get("antes"),
+        resultado.get("despues"),
+    )
+    await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_REACTIVADO)
+
+
+async def _a08_pedir_confirmacion_borrado(sender_phone: str, movimiento: dict[str, Any]) -> None:
+    """D24: muestra el movimiento completo y espera una frase explícita."""
+    await _a08_guardar(
+        CLAVE_A08_BORRADO.format(sender_phone),
+        {
+            "fase": "confirmacion",
+            "candidato": snapshot_movimiento(movimiento),
+            "candidatos": [],
+            "ts": int(time.time()),
+        },
+    )
+    await enviar_mensaje_whatsapp(
+        to_phone=sender_phone, mensaje=formatear_prompt_borrado(movimiento)
+    )
+
+
+async def _a08_iniciar_borrado(sender_phone: str, solicitud: SolicitudBorrado) -> None:
+    """Resuelve el movimiento pedido y arranca la confirmación explícita de D24."""
+    movimientos = await obtener_movimientos_cliente(sender_phone, incluir_inactivos=False)
+    if not movimientos:
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_BORRADO_SIN_MOVIMIENTOS)
+        return
+
+    candidatos = movimientos
+    if solicitud.tipo:
+        candidatos = [
+            m for m in candidatos if str(m.get("tipo_movimiento") or "").lower() == solicitud.tipo
+        ]
+    if solicitud.monto_centimos is not None:
+        candidatos = [
+            m for m in candidatos if int(m.get("monto_centimos") or 0) == solicitud.monto_centimos
+        ]
+
+    if not candidatos:
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_BORRADO_NO_ENCONTRADO)
+        return
+
+    # "el primero", "el segundo": se respeta el ordinal explícito del usuario.
+    if solicitud.ordinal is not None:
+        if solicitud.ordinal >= len(candidatos):
+            await enviar_mensaje_whatsapp(
+                to_phone=sender_phone, mensaje=TEXTO_BORRADO_NO_ENCONTRADO
+            )
+            return
+        await _a08_pedir_confirmacion_borrado(sender_phone, candidatos[solicitud.ordinal])
+        return
+
+    # Dos montos iguales: se muestran ambos con fecha/hora y se pide el número.
+    if solicitud.monto_centimos is not None and len(candidatos) > 1:
+        mostrados = candidatos[-5:]
+        await _a08_guardar(
+            CLAVE_A08_BORRADO.format(sender_phone),
+            {
+                "fase": "seleccion",
+                "candidato": None,
+                "candidatos": [snapshot_movimiento(m) for m in mostrados],
+                "ts": int(time.time()),
+            },
+        )
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone, mensaje=formatear_lista_borrado(mostrados)
+        )
+        return
+
+    await _a08_pedir_confirmacion_borrado(sender_phone, candidatos[-1])
+
+
+async def _a08_responder_borrado_pendiente(
+    sender_phone: str, texto: str, pendiente: dict[str, Any]
+) -> bool:
+    """
+    Responde al flujo de borrado ya iniciado. True si consumió el mensaje.
+
+    Si la fase es de selección, acepta número/ordinal/monto. En confirmación, solo
+    una frase explícita borra; cualquier otra cosa no borra (D24).
+    """
+    clave = CLAVE_A08_BORRADO.format(sender_phone)
+    fase = str(pendiente.get("fase") or "confirmacion")
+
+    if fase == "seleccion":
+        candidatos = pendiente.get("candidatos")
+        lista = candidatos if isinstance(candidatos, list) else []
+        if detectar_confirmacion_borrado(texto) == "no":
+            await _a08_borrar(clave)
+            await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_BORRADO_CANCELADO)
+            return True
+        indice = indice_seleccionado(texto, lista)
+        if indice is not None:
+            objetivo = lista[indice]
+            await _a08_pedir_confirmacion_borrado(sender_phone, objetivo)
+            return True
+        if parece_movimiento(texto):
+            # El usuario siguió con otra cosa: no se borra y se procesa normal.
+            await _a08_borrar(clave)
+            return False
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_SELECCION_INVALIDA)
+        return True
+
+    decision = detectar_confirmacion_borrado(texto)
+    if decision == "no":
+        await _a08_borrar(clave)
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_BORRADO_CANCELADO)
+        return True
+    if decision != "si":
+        if parece_movimiento(texto):
+            await _a08_borrar(clave)
+            return False
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_BORRADO_DUDA)
+        return True
+
+    candidato = pendiente.get("candidato")
+    movimiento = candidato if isinstance(candidato, dict) else {}
+    movimiento_id = str(movimiento.get("movimiento_id") or "")
+    resultado = await anular_movimiento(sender_phone, movimiento_id, "solicitud del usuario")
+    await _a08_borrar(clave)
+    if resultado is None:
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_BORRADO_ERROR)
+        return True
+
+    await _recordar_ultima_accion(
+        sender_phone,
+        "anular",
+        movimiento_id,
+        resultado.get("antes"),
+        resultado.get("despues"),
+    )
+    await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_BORRADO_OK)
+    return True
+
+
+async def _procesar_a08(sender_phone: str, texto: str) -> bool:
+    """
+    Puerta A08 antes del gate comercial (D25). Devuelve True si el mensaje se manejó.
+
+    Orden: deshacer explícito (no cierra la ventana) → borrado pendiente → historial →
+    reactivar → nuevo borrado. Cualquier otro mensaje cierra la ventana de D23.
+    """
+    clave_ultima = CLAVE_A08_ULTIMA.format(sender_phone)
+    clave_borrado = CLAVE_A08_BORRADO.format(sender_phone)
+    ultima = await _a08_leer(clave_ultima)
+    pendiente = await _a08_leer(clave_borrado)
+
+    if detectar_deshacer(texto):
+        if pendiente is not None:
+            await _a08_borrar(clave_borrado)
+        # El usuario cambió de tema: una pregunta de duplicado pendiente ya no aplica.
+        await _borrar_pendiente(sender_phone)
+        await _a08_deshacer(sender_phone, ultima)
+        return True
+
+    # D23: el siguiente mensaje procesado cierra la ventana, aunque no sea de A08.
+    if ultima is not None:
+        await _a08_borrar(clave_ultima)
+
+    if pendiente is not None:
+        if await _a08_responder_borrado_pendiente(sender_phone, texto, pendiente):
+            await _borrar_pendiente(sender_phone)
+            return True
+        # Si no consumió el mensaje, ya se canceló el borrado pendiente.
+
+    if detectar_historial(texto):
+        await _borrar_pendiente(sender_phone)
+        entradas = await obtener_historial(sender_phone, limite=MAX_HISTORIAL)
+        for bloque in dividir_mensaje_largo(formatear_historial(entradas, sender_phone)):
+            await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=bloque)
+        return True
+
+    if detectar_reactivar(texto):
+        await _borrar_pendiente(sender_phone)
+        await _a08_reactivar(sender_phone)
+        return True
+
+    solicitud = detectar_solicitud_borrado(texto)
+    if solicitud is not None:
+        await _borrar_pendiente(sender_phone)
+        await _a08_iniciar_borrado(sender_phone, solicitud)
+        return True
+
     return False
 
 
@@ -315,15 +685,13 @@ async def _evaluar_alerta_presupuesto(
 def _formatear_movimiento(fila: list[str]) -> str:
     """Formatea una fila de la pestaña del cliente para el mensaje de exportación (6.5.3)."""
     fecha = fila[0] if len(fila) > 0 else ""
-    monto = fila[1] if len(fila) > 1 else ""
+    valor = monto_con_signo(fila)
+    monto_formateado = f"-₡{abs(valor)}" if valor < 0 else f"₡{valor}"
     categoria = fila[2] if len(fila) > 2 else ""
     detalle = fila[3] if len(fila) > 3 else ""
-    try:
-        valor = int(monto)
-        monto_formateado = f"-₡{abs(valor)}" if valor < 0 else f"₡{valor}"
-    except (TypeError, ValueError):
-        monto_formateado = str(monto)
-    return f"{fecha} · {monto_formateado} · {categoria} · {detalle}"
+    estado = str(fila[9]) if len(fila) > 9 else ""
+    sufijo = f" · {estado}" if estado in {"anulado", "pendiente"} else ""
+    return f"{fecha} · {monto_formateado} · {categoria} · {detalle}{sufijo}"
 
 
 # ==========================================
@@ -550,6 +918,12 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
+    # D23 — el siguiente mensaje procesado cierra la ventana de deshacer, incluso si
+    # es administrativo (consentimiento, STOP, cambio de número). El propio "deshacé"
+    # no la cierra: A08 lo consume después para poder revertir la última acción.
+    if not detectar_deshacer(transcripcion):
+        await _a08_borrar(CLAVE_A08_ULTIMA.format(sender_phone))
+
     # 1.5 Fase 6.1 - Cambio de número (spec 5.6): la confirmación llega desde el número
     #     nuevo, que todavía no tiene consentimiento, por eso va antes del gate legal.
     #     Orden endurecido (deuda #17): primero el chequeo de pestaña (si el número
@@ -678,6 +1052,12 @@ async def _procesar_pipeline(
         await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=mensaje_cambio)
         return file_path or ""
 
+    # 2.7 A08 — Corrección, borrado, deshacer e historial (D23/D24/D25). Va antes
+    #     del gate comercial para que corregir/borrar/deshacer funcione con plan
+    #     vencido; el alta de movimientos nuevos sigue bloqueada en el gate.
+    if await _procesar_a08(sender_phone, transcripcion):
+        return file_path or ""
+
     # 3. Fase 6.5.3 — Derechos ARCO (Ley 8968): "exporta mis datos" / "darme de baja"
     # Fase 6.1 - Onboarding guiado: respuesta al paso actual del alta
     mensaje_onboarding = await _responder_paso_onboarding(sender_phone, transcripcion)
@@ -688,7 +1068,8 @@ async def _procesar_pipeline(
     respuesta_arco = detectar_respuesta_exportacion_baja(transcripcion)
 
     if respuesta_arco == "exportar":
-        filas = await obtener_transacciones_cliente(sender_phone)
+        # ARCO: el usuario tiene derecho a TODOS sus datos, incluidos los anulados.
+        filas = await obtener_transacciones_cliente(sender_phone, incluir_inactivos=True)
         if not filas:
             await enviar_mensaje_whatsapp(
                 to_phone=sender_phone,
@@ -696,6 +1077,31 @@ async def _procesar_pipeline(
             )
             return file_path or ""
 
+        formatos: tuple[tuple[FormatoExport, str], ...] = (
+            ("csv", MIME_CSV),
+            ("xlsx", MIME_XLSX),
+        )
+        enviados = 0
+        for formato, mime_type in formatos:
+            try:
+                contenido = generar_exportacion(filas, formato)
+                nombre = nombre_exportacion(filas, formato)
+            except Exception as error:  # noqa: BLE001 - se intenta el otro formato
+                logger.error("export: no se pudo generar %s (%s)", formato, error)
+                continue
+            if await enviar_documento_whatsapp(
+                to_phone=sender_phone,
+                contenido=contenido,
+                nombre=nombre,
+                mime_type=mime_type,
+                caption=TEXTO_EXPORTACION_DOCUMENTO,
+            ):
+                enviados += 1
+
+        if enviados:
+            return file_path or ""
+
+        # Plan B: si Meta rechaza los documentos, se manda el texto de siempre.
         movimientos = "\n".join(_formatear_movimiento(fila) for fila in filas)
         texto_completo = f"{TEXTO_EXPORTACION_ENCABEZADO}\n{movimientos}"
         bloques = dividir_mensaje_largo(texto_completo)
@@ -711,9 +1117,11 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
-    # 3.5 Gate comercial (Fase 7.2.1, ADR-0013): suscripción vigente
+    # 3.5 Gate comercial (Fase 7.2.1, ADR-0013): suscripción vigente. D25 permite
+    #     corregir/borrar/deshacer con plan vencido; el alta nueva sigue bloqueada.
     suscripcion = await obtener_suscripcion(sender_phone)
-    if not suscripcion_permite_uso(suscripcion):
+    plan_permite = suscripcion_permite_uso(suscripcion)
+    if not plan_permite and not detectar_intencion_correccion(transcripcion):
         await enviar_mensaje_whatsapp(
             to_phone=sender_phone,
             mensaje=mensaje_suscripcion_no_activa(suscripcion),
@@ -741,10 +1149,19 @@ async def _procesar_pipeline(
     if pendiente is not None:
         decision = detectar_confirmacion_duplicado(transcripcion)
         if decision == "otro":
-            if not await _guardar_transaccion_o_avisar(pendiente, sender_phone):
+            guardado_dup = await _guardar_transaccion_o_avisar(pendiente, sender_phone)
+            if guardado_dup is None:
                 return file_path or ""
             await _borrar_pendiente(sender_phone)
             await _marcar_ultimo_registro(sender_phone, pendiente, None)
+            if guardado_dup.get("movimiento_id"):
+                await _recordar_ultima_accion(
+                    sender_phone,
+                    "crear",
+                    str(guardado_dup["movimiento_id"]),
+                    None,
+                    guardado_dup,
+                )
             await enviar_mensaje_whatsapp(
                 to_phone=sender_phone,
                 mensaje=TEXTO_DUPLICADO_CONFIRMADO,
@@ -773,6 +1190,15 @@ async def _procesar_pipeline(
 
     accion = transaction_data.get("accion", "registrar")
 
+    # D25 — el bypass del gate solo sirve si el parser confirma una corrección. Un
+    # falso positivo de la heurística no puede crear un movimiento con plan vencido.
+    if not plan_permite and accion != "corregir":
+        await enviar_mensaje_whatsapp(
+            to_phone=sender_phone,
+            mensaje=mensaje_suscripcion_no_activa(suscripcion),
+        )
+        return file_path or ""
+
     if accion == "no_transaccion":
         # 8.6.3 — Presupuesto, tope, límite o consulta: no es dinero que entró o
         # salió, así que no se guarda nada (0 filas). Retorno temprano: sin Sheets
@@ -799,13 +1225,43 @@ async def _procesar_pipeline(
         return file_path or ""
 
     if accion == "corregir":
-        corregido = await update_last_transaction_to_sheet(transaction_data, sender_phone)
-        if corregido:
-            monto_aplicado, categoria_aplicada = corregido[0], corregido[1]
+        try:
+            corregido: Any = await update_last_transaction_to_sheet(transaction_data, sender_phone)
+        except MovimientoAnuladoError:
             await enviar_mensaje_whatsapp(
                 to_phone=sender_phone,
-                mensaje=(f"Corregido: {categoria_aplicada} - " f"₡{abs(monto_aplicado)}"),
+                mensaje=(
+                    "Ese movimiento está anulado. Para corregirlo, primero "
+                    'decime "reactivá el último".'
+                ),
             )
+            return file_path or ""
+
+        if corregido:
+            despues = corregido.get("despues") if isinstance(corregido, dict) else None
+            if isinstance(corregido, dict) and isinstance(despues, dict):
+                await _recordar_ultima_accion(
+                    sender_phone,
+                    "corregir",
+                    str(corregido.get("movimiento_id") or ""),
+                    corregido.get("antes"),
+                    despues,
+                )
+                await enviar_mensaje_whatsapp(
+                    to_phone=sender_phone,
+                    mensaje=formatear_confirmacion_movimiento(despues, verbo="Corregí"),
+                )
+            else:  # compatibilidad con dobles de prueba que aún devuelven la fila
+                monto_aplicado = (
+                    corregido.get("monto", 0) if isinstance(corregido, dict) else corregido[0]
+                )
+                categoria_aplicada = (
+                    corregido.get("categoria", "") if isinstance(corregido, dict) else corregido[1]
+                )
+                await enviar_mensaje_whatsapp(
+                    to_phone=sender_phone,
+                    mensaje=f"Corregido: {categoria_aplicada} - ₡{abs(monto_aplicado)}",
+                )
         else:
             await enviar_mensaje_whatsapp(
                 to_phone=sender_phone,
@@ -826,6 +1282,7 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
+    guardado: dict[str, Any] | None
     if accion == "registrar":
         media_id = _media_id_de(file_path)
 
@@ -838,12 +1295,23 @@ async def _procesar_pipeline(
             )
             return file_path or ""
 
-        if not await _guardar_transaccion_o_avisar(transaction_data, sender_phone):
+        guardado = await _guardar_transaccion_o_avisar(transaction_data, sender_phone)
+        if guardado is None:
             return file_path or ""
         await _marcar_ultimo_registro(sender_phone, transaction_data, media_id)
     else:
-        if not await _guardar_transaccion_o_avisar(transaction_data, sender_phone):
+        guardado = await _guardar_transaccion_o_avisar(transaction_data, sender_phone)
+        if guardado is None:
             return file_path or ""
+
+    if guardado.get("movimiento_id"):
+        await _recordar_ultima_accion(
+            sender_phone,
+            "crear",
+            str(guardado["movimiento_id"]),
+            None,
+            guardado,
+        )
 
     alerta_presupuesto = await _evaluar_alerta_presupuesto(transaction_data, sender_phone)
 
@@ -854,13 +1322,14 @@ async def _procesar_pipeline(
             await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=alerta_presupuesto)
         return file_path or ""
 
-    await enviar_mensaje_whatsapp(
-        to_phone=sender_phone,
-        mensaje=(
+    if guardado.get("movimiento_id"):
+        mensaje_registro = formatear_confirmacion_movimiento(guardado)
+    else:
+        mensaje_registro = (
             f"Transacción registrada: {transaction_data['categoria']} - "
             f"₡{transaction_data['monto']}"
-        ),
-    )
+        )
+    await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=mensaje_registro)
     if alerta_presupuesto:
         await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=alerta_presupuesto)
     return file_path or ""

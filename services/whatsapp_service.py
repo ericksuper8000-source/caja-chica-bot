@@ -116,3 +116,54 @@ async def enviar_imagen_whatsapp(to_phone: str, imagen: bytes, caption: str) -> 
     except Exception as e:
         logger.error(f"Error al enviar imagen a WhatsApp: {e}")
         return False
+
+
+async def enviar_documento_whatsapp(
+    to_phone: str,
+    contenido: bytes,
+    nombre: str,
+    mime_type: str,
+    caption: str = "",
+) -> bool:
+    """
+    Envía un documento (CSV/XLSX) por WhatsApp Business: sube el archivo a Meta
+    (POST /{phone_id}/media) y luego manda un mensaje tipo `document` con el media_id.
+
+    Devuelve False ante cualquier fallo para que el pipeline de exportación degrade al
+    texto de siempre: el archivo es una comodidad, los datos no se pierden.
+    """
+    base = f"https://graph.facebook.com/v18.0/{settings.WHATSAPP_PHONE_NUMBER_ID}"
+    headers = {"Authorization": f"Bearer {settings.WHATSAPP_API_TOKEN}"}
+
+    try:
+        async with httpx.AsyncClient() as _http_client:
+            subida = await _http_client.post(
+                f"{base}/media",
+                headers=headers,
+                data={"messaging_product": "whatsapp", "type": mime_type},
+                files={"file": (nombre, contenido, mime_type)},
+            )
+            subida.raise_for_status()
+            media_id = subida.json().get("id")
+            if not media_id:
+                logger.error("Error al subir el documento a WhatsApp: Meta no devolvió media_id.")
+                return False
+
+            documento: dict[str, str] = {"id": media_id, "filename": nombre}
+            if caption:
+                documento["caption"] = caption[:LIMITE_CAPTION_WHATSAPP]
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": to_phone,
+                "type": "document",
+                "document": documento,
+            }
+            respuesta = await _http_client.post(f"{base}/messages", headers=headers, json=payload)
+            respuesta.raise_for_status()
+
+        logger.info(f"Documento enviado con éxito a {to_phone}.")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error al enviar documento a WhatsApp: {e}")
+        return False

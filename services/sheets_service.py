@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -7,6 +8,16 @@ import gspread
 from gspread.utils import ValueInputOption  # Importamos el enumerado para el tipado
 
 from app.config import settings
+from services.modelo_service import (
+    ESTADOS_ACTIVOS,
+    TRANSACTION_HEADERS,
+    es_fila_vacia,
+    fila_a_movimiento,
+    migrar_filas_legacy,
+    movimiento_a_fila,
+    nuevo_movimiento_id,
+    tipo_encabezado,
+)
 from services.politica_service import POLITICA_VERSION
 from services.suscripcion_service import ESTADOS_CON_ACCESO
 
@@ -14,14 +25,35 @@ logger = logging.getLogger(__name__)
 
 _sheets_client: Any = None
 
+
+class MovimientoAnuladoError(Exception):
+    """Se intentó corregir un movimiento anulado (A08: primero se reactiva)."""
+
+    def __init__(self, movimiento: dict[str, Any]) -> None:
+        self.movimiento = movimiento
+        super().__init__("movimiento anulado")
+
+
 # Fase 6.5.1 — Consentimiento (ADR-0011, Ley 8968). En MVP la "tabla usuarios"
 # se materializa como una pestaña del mismo Google Sheet (ADR-0002/0009).
 CONSENT_TAB_NAME = "Consentimiento"
 CONSENT_HEADERS = ["telefono", "estado", "fecha", "version_politica"]
 
 # Fase 6.5.2 — Aislamiento por pestañas (ADR-0009). Cada cliente escribe SOLO en su
-# pestaña (título = teléfono), creada perezosamente con estos encabezados.
-TRANSACTION_HEADERS = ["fecha", "monto", "categoria", "detalle", "telefono"]
+# pestaña (título = teléfono), creada perezosamente con el encabezado canónico (A02).
+# `TRANSACTION_HEADERS` se importa de `services.modelo_service` (13 columnas).
+AUDITORIA_TAB_NAME = "Auditoria"
+AUDITORIA_HEADERS = [
+    "auditoria_id",
+    "entidad",
+    "entidad_id",
+    "accion",
+    "antes",
+    "despues",
+    "actor_id",
+    "motivo",
+    "fecha",
+]
 
 
 def get_sheets_client() -> Any:
@@ -43,15 +75,17 @@ def get_sheets_client() -> Any:
 def _sync_get_client_worksheet(spreadsheet_id: str, sender_phone: str) -> Any:
     """
     Resuelve la pestaña del cliente por teléfono (título = sender_phone) y la crea con
-    encabezados si no existe (ADR-0009, aislamiento por pestañas). Cada cliente escribe
-    SOLO en su pestaña dentro del mismo spreadsheet.
+    el encabezado canónico si no existe (ADR-0009, aislamiento por pestañas). Cada
+    cliente escribe SOLO en su pestaña dentro del mismo spreadsheet.
     """
     client = get_sheets_client()
     spreadsheet = client.open_by_key(spreadsheet_id)
     try:
         worksheet = spreadsheet.worksheet(sender_phone)
     except gspread.exceptions.WorksheetNotFound:
-        worksheet = spreadsheet.add_worksheet(title=sender_phone, rows=100, cols=10)
+        worksheet = spreadsheet.add_worksheet(
+            title=sender_phone, rows=100, cols=len(TRANSACTION_HEADERS)
+        )
         worksheet.append_row(
             TRANSACTION_HEADERS,
             value_input_option=ValueInputOption.user_entered,
@@ -59,160 +93,791 @@ def _sync_get_client_worksheet(spreadsheet_id: str, sender_phone: str) -> Any:
     return worksheet
 
 
-def _sync_append_row(spreadsheet_id: str, row_values: list[Any], sender_phone: str) -> None:
+def _parece_fila_dato(fila: list[Any]) -> bool:
+    """Heurística para hojas sin encabezado reconocible: ¿la primera fila es un dato?"""
+    if not fila:
+        return False
+    try:
+        int(float(str(fila[1]).replace(",", "")))
+    except (IndexError, TypeError, ValueError):
+        return False
+    return bool(str(fila[0]).strip())
+
+
+def _movimiento_de_fila(fila: list[Any], tipo: str = "") -> dict[str, Any]:
     """
-    Operación puramente síncrona que interactúa con la API de Google Sheets.
-    Escribe en la pestaña del cliente (aislamiento por pestañas, ADR-0009).
+    Normaliza una fila de una pestaña cuyo encabezado ya conocemos. Evita depender del
+    largo de la fila (Sheets recorta celdas vacías del final) y no inventa IDs.
     """
-    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
+    valores = list(fila)
+    if tipo == "canonico":
+        valores += [""] * max(0, len(TRANSACTION_HEADERS) - len(valores))
+    return fila_a_movimiento(valores)
 
-    # Se utiliza ValueInputOption.user_entered para cumplir con el tipado de mypy
-    worksheet.append_row(row_values, value_input_option=ValueInputOption.user_entered)
 
-
-def _sync_update_last_row(spreadsheet_id: str, sender_phone: str, row_values: list[Any]) -> None:
+def _sync_escribir_tab_canonica(worksheet: Any, filas: list[list[Any]]) -> None:
     """
-    Operación síncrona: localiza la última fila cuyo teléfono coincida con el remitente
-    en la pestaña del cliente (ADR-0009) y reescribe sus celdas (monto, categoría,
-    detalle y teléfono) conservando la fecha. Lanza LookupError si el usuario no tiene
-    transacciones previas.
+    Reescribe una pestaña con el encabezado canónico y las filas dadas.
+
+    Se escribe primero y se limpia la cola después (no al revés): si la escritura
+    falla, la hoja conserva su contenido anterior. La migración nunca debe perder
+    filas ni montos aunque la API falle a mitad de camino.
     """
-    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
-
-    phone_values = worksheet.col_values(5)
-    matches = [i for i, phone in enumerate(phone_values, start=1) if phone == sender_phone]
-    if not matches:
-        raise LookupError(f"sin transacciones previas para {sender_phone}")
-
-    last_row = matches[-1]
+    total_nuevo = len(filas) + 1
     worksheet.update(
-        f"B{last_row}:E{last_row}",
-        [row_values],
+        f"A1:M{total_nuevo}",
+        [TRANSACTION_HEADERS, *filas],
+        value_input_option=ValueInputOption.user_entered,
+    )
+    existentes = len(worksheet.get_all_values())
+    if existentes > total_nuevo:
+        worksheet.batch_clear([f"A{total_nuevo + 1}:M{existentes}"])
+
+
+def _sync_migrar_pestana(
+    spreadsheet_id: str, sender_phone: str, worksheet: Any | None = None
+) -> dict[str, Any]:
+    """
+    Migra perezosamente la pestaña histórica de 5 columnas al modelo canónico.
+
+    Devuelve el reporte de conciliación (`filas_antes/despues`, totales y `cuadra`).
+    Si `cuadra` es False no escribe nada y lanza ValueError: una migración que no
+    concilia es un incidente, no una advertencia.
+    """
+    worksheet = worksheet or _sync_get_client_worksheet(spreadsheet_id, sender_phone)
+    values = worksheet.get_all_values()
+    if not values:
+        worksheet.update(
+            "A1:M1",
+            [TRANSACTION_HEADERS],
+            value_input_option=ValueInputOption.user_entered,
+        )
+        return {"migrada": True, "filas_antes": 0, "filas_despues": 0, "cuadra": True}
+
+    tipo = tipo_encabezado(values[0])
+    if tipo == "canonico":
+        return {"migrada": False, "filas_antes": len(values) - 1, "cuadra": True}
+    if tipo == "legacy":
+        datos = values[1:]
+    elif _parece_fila_dato(values[0]):
+        datos = values
+    else:
+        datos = values[1:]
+
+    filas_canonicas, reporte = migrar_filas_legacy(datos, sender_phone)
+    if not reporte["cuadra"]:
+        logger.error(
+            "migracion: la pestaña de %s NO concilia; no se escribe: %s",
+            sender_phone,
+            reporte,
+        )
+        raise ValueError(f"migración sin conciliación para {sender_phone}: {reporte}")
+
+    _sync_escribir_tab_canonica(worksheet, filas_canonicas)
+    _sync_registrar_auditoria(
+        spreadsheet_id,
+        "pestana",
+        sender_phone,
+        "crear",
+        None,
+        reporte,
+        "sistema",
+        "migracion_esquema_canonico",
+    )
+    logger.info("migracion: pestaña de %s migrada al modelo canónico: %s", sender_phone, reporte)
+    return {"migrada": True, **reporte}
+
+
+def _sync_asegurar_esquema_canonico(worksheet: Any, sender_phone: str) -> dict[str, Any]:
+    """Garantiza el encabezado canónico antes de escribir o corregir."""
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    return _sync_migrar_pestana(spreadsheet_id, sender_phone, worksheet=worksheet)
+
+
+def _sync_append_row(spreadsheet_id: str, movimiento: dict[str, Any], sender_phone: str) -> None:
+    """
+    Escribe un movimiento canónico en la pestaña del cliente. Si la pestaña todavía
+    está en el formato histórico, primero la migra (una sola vez) y luego agrega.
+    """
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
+    _sync_asegurar_esquema_canonico(worksheet, sender_phone)
+    worksheet.append_row(
+        movimiento_a_fila(movimiento),
         value_input_option=ValueInputOption.user_entered,
     )
 
 
-def _sync_read_last_row(spreadsheet_id: str, sender_phone: str) -> list[Any]:
+def _sync_leer_movimientos(
+    spreadsheet_id: str, sender_phone: str, *, incluir_inactivos: bool = True
+) -> list[dict[str, Any]]:
     """
-    Operación síncrona: lee la última fila cuyo teléfono coincida con el remitente
-    (columnas A:E) en la pestaña del cliente (ADR-0009) para poder fusionar el delta
-    de una corrección con los valores anteriores. Lanza LookupError si el usuario no
-    tiene transacciones previas.
+    Lee los movimientos de la pestaña del cliente y los normaliza al contrato canónico.
+
+    No migra ni escribe: es una lectura compatible con pestañas históricas. Cada
+    movimiento incluye `_fila` (número de fila en Sheets, 1-based) para las
+    operaciones que reescriben en el lugar.
     """
     worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
+    values = worksheet.get_all_values()
+    if not values:
+        return []
 
-    phone_values = worksheet.col_values(5)
-    matches = [i for i, phone in enumerate(phone_values, start=1) if phone == sender_phone]
-    if not matches:
-        raise LookupError(f"sin transacciones previas para {sender_phone}")
+    tipo = tipo_encabezado(values[0])
+    if tipo in ("legacy", "canonico"):
+        filas = values[1:]
+        inicio = 2
+    elif _parece_fila_dato(values[0]):
+        filas = values
+        inicio = 1
+    else:
+        filas = values[1:]
+        inicio = 2
 
-    last_row = matches[-1]
-    return list(worksheet.row_values(last_row))
+    movimientos: list[dict[str, Any]] = []
+    for numero, fila in enumerate(filas, start=inicio):
+        if es_fila_vacia(fila):
+            continue
+        movimiento = _movimiento_de_fila(fila, tipo)
+        if not incluir_inactivos and movimiento["estado"] not in ESTADOS_ACTIVOS:
+            continue
+        movimiento["_fila"] = numero
+        movimientos.append(movimiento)
+    return movimientos
 
 
-def _merge_delta_con_ultima_fila(delta: dict[str, Any], fila_anterior: list[Any]) -> list[Any]:
+def _movimiento_desde_transaccion(
+    transaction_data: dict[str, Any], sender_phone: str
+) -> dict[str, Any]:
+    """Construye un movimiento canónico a partir del JSON del parser/LLM."""
+    fecha_actual = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        monto = int(transaction_data.get("monto") or 0)
+    except (TypeError, ValueError):
+        monto = 0
+
+    tipo = str(transaction_data.get("tipo_movimiento") or "").strip().lower()
+    if tipo not in ("ingreso", "gasto", "transferencia", "reembolso", "devolucion"):
+        # Compatibilidad: antes, sin tipo explícito, todo positivo era Gasto.
+        tipo = "gasto"
+    if monto < 0:
+        tipo = "gasto"
+
+    return {
+        "fecha_movimiento": str(transaction_data.get("fecha_movimiento") or fecha_actual),
+        "monto_centimos": abs(monto) * 100,
+        "monto": -abs(monto) if tipo == "gasto" else abs(monto),
+        "categoria": str(transaction_data.get("categoria") or "Otros"),
+        "detalle": str(transaction_data.get("detalle") or ""),
+        "telefono": sender_phone,
+        "movimiento_id": nuevo_movimiento_id(),
+        "tipo_movimiento": tipo,
+        "moneda": str(transaction_data.get("moneda") or "CRC"),
+        "contexto_tipo": str(transaction_data.get("contexto_tipo") or "personal"),
+        "estado": "confirmado",
+        "version": 1,
+        "fecha_registro": fecha_actual,
+        "origen": str(transaction_data.get("origen") or "chat"),
+    }
+
+
+def _merge_delta_con_movimiento(delta: dict[str, Any], anterior: dict[str, Any]) -> dict[str, Any]:
     """
-    Fusiona el delta de una corrección con los valores de la última fila del usuario.
+    Fusiona el delta de una corrección con el movimiento anterior.
 
-    Semántica de delta (plan-correccion-delta.md, hallazgo 13/08/2026): un campo que el
-    LLM devuelve como None significa "el usuario no lo mencionó" → se conserva el valor
-    anterior. Un campo con valor se aplica. Desde el 20/08/2026 un monto de 0 también se
-    trata como "no mencionado" (el 0 es un monto inválido que la IA no debe inventar) y
-    conserva el monto anterior. La fila previa viene como
-    [fecha, monto, categoria, detalle, telefono] y se devuelve el row a escribir en B:E.
+    Semántica delta (ADR-0012): `None` o monto 0 = "no mencionado" → se conserva.
+    Devuelve los campos financieros que cambian; no modifica identidad ni fecha.
     """
-    prev_monto = int(fila_anterior[1]) if len(fila_anterior) > 1 and fila_anterior[1] else 0
-    prev_categoria = fila_anterior[2] if len(fila_anterior) > 2 else "Otros"
-    prev_detalle = fila_anterior[3] if len(fila_anterior) > 3 else ""
-
     tipo = delta.get("tipo_movimiento")
     if tipo is None:
-        tipo = "Gasto" if prev_monto < 0 else "Ingreso"
+        tipo = anterior["tipo_movimiento"]
+    tipo_norm = str(tipo).strip().lower()
 
     monto = delta.get("monto")
     if not monto:
-        monto = abs(prev_monto)
+        monto_centimos = int(anterior["monto_centimos"])
+        monto_abs = monto_centimos // 100
+        monto = -monto_abs if anterior["tipo_movimiento"] == "gasto" else monto_abs
+    else:
+        try:
+            monto = int(monto)
+        except (TypeError, ValueError):
+            monto = 0
+        if tipo_norm == "gasto" and monto > 0:
+            monto = -monto
+        elif tipo_norm == "ingreso" and monto < 0:
+            monto = abs(monto)
 
-    if tipo.lower() == "gasto" and monto > 0:
-        monto = -monto
+    if monto < 0:
+        tipo_final = "gasto"
+    elif monto > 0:
+        tipo_final = "ingreso" if tipo_norm != "gasto" else "gasto"
+    else:
+        tipo_final = anterior["tipo_movimiento"]
 
-    categoria = delta.get("categoria") or prev_categoria
-    detalle = delta.get("detalle") or prev_detalle
+    return {
+        "monto": monto,
+        "monto_centimos": abs(monto) * 100,
+        "tipo_movimiento": tipo_final,
+        "categoria": delta.get("categoria") or anterior["categoria"],
+        "detalle": delta.get("detalle") or anterior["detalle"],
+    }
 
-    return [monto, categoria, detalle]
 
-
-async def append_transaction_to_sheet(transaction_data: dict[str, Any], sender_phone: str) -> bool:
+def _sync_corregir_ultimo(
+    spreadsheet_id: str, sender_phone: str, transaction_data: dict[str, Any]
+) -> dict[str, Any]:
     """
-    Inserta una nueva fila en Google Sheets de manera asíncrona, en la pestaña del
-    cliente (ADR-0009, aislamiento por pestañas; título = teléfono).
+    Corrige el último movimiento activo del cliente (delta, ADR-0012), sin crear una
+    fila nueva. Actualiza estado a `corregido`, incrementa `version` y deja el
+    antes/después en auditoría. Lanza LookupError si no hay movimientos.
+    """
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
+    _sync_asegurar_esquema_canonico(worksheet, sender_phone)
+    movimientos = _sync_leer_movimientos(spreadsheet_id, sender_phone, incluir_inactivos=True)
+    activos = [m for m in movimientos if m["estado"] in ESTADOS_ACTIVOS]
+    if not activos:
+        if movimientos:
+            raise MovimientoAnuladoError(movimientos[-1])
+        raise LookupError(f"sin transacciones previas para {sender_phone}")
 
-    La fila guarda también el teléfono del remitente (columna "teléfono"),
-    base para localizar la última transacción del usuario en el flujo de
-    corrección (5.5.3) y para la identidad por teléfono (6.1).
+    anterior = activos[-1]
+    antes = {clave: valor for clave, valor in anterior.items() if clave != "_fila"}
+    cambios = _merge_delta_con_movimiento(transaction_data, antes)
+    nuevo = dict(antes)
+    nuevo.update(cambios)
+    nuevo["estado"] = "corregido"
+    nuevo["version"] = int(antes.get("version") or 1) + 1
+
+    fila = int(anterior["_fila"])
+    worksheet.update(
+        f"A{fila}:M{fila}",
+        [movimiento_a_fila(nuevo)],
+        value_input_option=ValueInputOption.user_entered,
+    )
+    _sync_registrar_auditoria(
+        spreadsheet_id,
+        "movimiento",
+        str(nuevo["movimiento_id"]),
+        "corregir",
+        antes,
+        nuevo,
+        sender_phone,
+    )
+    return {
+        "movimiento_id": nuevo["movimiento_id"],
+        "movimiento": nuevo,
+        "antes": antes,
+        "despues": nuevo,
+        "fila": fila,
+        "monto": cambios["monto"],
+        "categoria": nuevo["categoria"],
+        "detalle": nuevo["detalle"],
+    }
+
+
+async def append_transaction_to_sheet(
+    transaction_data: dict[str, Any], sender_phone: str
+) -> dict[str, Any] | None:
+    """
+    Inserta un movimiento canónico en la pestaña del cliente (ADR-0009). Si la
+    pestaña es histórica, la migra antes de escribir. Devuelve el movimiento creado
+    (con `movimiento_id`) o None si Sheets falla. La auditoría se registra después
+    de la escritura y su fallo no invalida el movimiento ya guardado.
     """
     spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
 
     try:
-        fecha_actual = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
-        monto = transaction_data.get("monto", 0)
-        tipo = transaction_data.get("tipo_movimiento") or "Gasto"
-
-        if tipo.lower() == "gasto" and monto > 0:
-            monto = -monto
-
-        row_values = [
-            fecha_actual,
-            monto,
-            transaction_data.get("categoria", "Otros"),
-            transaction_data.get("detalle", ""),
+        movimiento = _movimiento_desde_transaccion(transaction_data, sender_phone)
+        await asyncio.to_thread(_sync_append_row, spreadsheet_id, movimiento, sender_phone)
+        await registrar_auditoria(
+            "movimiento",
+            str(movimiento["movimiento_id"]),
+            "crear",
+            None,
+            movimiento,
             sender_phone,
-        ]
-
-        await asyncio.to_thread(_sync_append_row, spreadsheet_id, row_values, sender_phone)
-
-        logger.info(f"Fila insertada con éxito en Sheets de forma asíncrona: {row_values}")
-        return True
+        )
+        logger.info(f"Fila canónica insertada en Sheets: {movimiento}")
+        return movimiento
 
     except gspread.exceptions.APIError as error:
         logger.error(f"Error de API de gspread al escribir en Google Sheets: {error}")
-        return False
+        return None
     except Exception as e:
         logger.error(f"Error inesperado en el servicio de Sheets: {e}")
-        return False
+        return None
 
 
 async def update_last_transaction_to_sheet(
     transaction_data: dict[str, Any], sender_phone: str
-) -> list[Any] | None:
+) -> dict[str, Any] | None:
     """
-    Actualiza la última transacción del remitente con los datos corregidos
-    (flujo de corrección 5.5.3, ADR-0010) usando semántica de DELTA: los campos
-    que el LLM devuelve como None se conservan de la fila anterior (corrección
-    parcial no destruye datos). Operación en la pestaña del cliente (ADR-0009,
-    aislamiento por pestañas). Devuelve la fila final aplicada [monto, categoria,
-    detalle]; None si el usuario no tiene transacciones previas o hubo error de API.
+    Corrige el último movimiento activo del remitente con semántica delta (ADR-0012).
+    Devuelve `{movimiento_id, antes, despues, fila, monto, categoria, detalle}` o None
+    si no hay movimientos previos / Sheets falla. Lanza MovimientoAnuladoError si
+    todos los movimientos existentes están anulados (A08: primero se reactiva).
     """
     spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
 
     try:
-        fila_anterior = await asyncio.to_thread(_sync_read_last_row, spreadsheet_id, sender_phone)
-        row_values = _merge_delta_con_ultima_fila(transaction_data, fila_anterior)
-        row_to_write = [*row_values, sender_phone]
-
-        await asyncio.to_thread(_sync_update_last_row, spreadsheet_id, sender_phone, row_to_write)
-
-        logger.info(f"Transacción corregida en Sheets para {sender_phone}: {row_to_write}")
-        return row_values
+        resultado = await asyncio.to_thread(
+            _sync_corregir_ultimo, spreadsheet_id, sender_phone, transaction_data
+        )
+        logger.info(f"Transacción corregida en Sheets para {sender_phone}: {resultado['despues']}")
+        return resultado
 
     except LookupError as error:
         logger.info(f"No hay transacción previa del usuario {sender_phone}: {error}")
         return None
+    except MovimientoAnuladoError:
+        raise
     except gspread.exceptions.APIError as error:
         logger.error(f"Error de API de gspread al corregir en Google Sheets: {error}")
         return None
     except Exception as e:
         logger.error(f"Error inesperado en el servicio de Sheets (corregir): {e}")
+        return None
+
+
+# ==========================================
+# A02/A08 — AUDITORÍA Y ESTADOS DEL MOVIMIENTO
+# ==========================================
+def _sync_get_auditoria_worksheet(spreadsheet_id: str) -> Any:
+    """Devuelve la pestaña `Auditoria`, creándola con encabezados si no existe."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    try:
+        worksheet = spreadsheet.worksheet(AUDITORIA_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(
+            title=AUDITORIA_TAB_NAME, rows=1000, cols=len(AUDITORIA_HEADERS)
+        )
+        worksheet.append_row(
+            AUDITORIA_HEADERS,
+            value_input_option=ValueInputOption.user_entered,
+        )
+    return worksheet
+
+
+def _json_auditoria(valor: dict[str, Any] | None) -> str:
+    """Serializa el antes/después sin campos internos y sin reventar por tipos raros."""
+    if valor is None:
+        return ""
+    limpio = {clave: dato for clave, dato in valor.items() if not str(clave).startswith("_")}
+    return json.dumps(limpio, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _sync_registrar_auditoria(
+    spreadsheet_id: str,
+    entidad: str,
+    entidad_id: str,
+    accion: str,
+    antes: dict[str, Any] | None,
+    despues: dict[str, Any] | None,
+    actor_id: str,
+    motivo: str = "",
+) -> bool:
+    """Agrega una fila al registro de auditoría (A02 §2.13 / A08 §5.5)."""
+    worksheet = _sync_get_auditoria_worksheet(spreadsheet_id)
+    worksheet.append_row(
+        [
+            nuevo_movimiento_id(),
+            entidad,
+            entidad_id,
+            accion,
+            _json_auditoria(antes),
+            _json_auditoria(despues),
+            actor_id,
+            motivo,
+            datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+        ],
+        value_input_option=ValueInputOption.user_entered,
+    )
+    return True
+
+
+async def registrar_auditoria(
+    entidad: str,
+    entidad_id: str,
+    accion: str,
+    antes: dict[str, Any] | None,
+    despues: dict[str, Any] | None,
+    actor_id: str,
+    motivo: str = "",
+) -> bool:
+    """
+    Registra una acción en la pestaña `Auditoria`. Nunca levanta: la escritura
+    financiera ya ocurrió y un fallo de auditoría no debe convertirla en error.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_registrar_auditoria,
+            spreadsheet_id,
+            entidad,
+            entidad_id,
+            accion,
+            antes,
+            despues,
+            actor_id,
+            motivo,
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al registrar auditoría: {error}")
+        return False
+    except Exception as e:
+        logger.error(f"Error inesperado al registrar auditoría: {e}")
+        return False
+
+
+def _buscar_movimiento(
+    movimientos: list[dict[str, Any]],
+    movimiento_id: str | None,
+    *,
+    solo_activos: bool,
+) -> dict[str, Any] | None:
+    """Busca por ID (o toma el último) dentro de la lista, opcionalmente solo activos."""
+    candidatos = (
+        [m for m in movimientos if m["estado"] in ESTADOS_ACTIVOS] if solo_activos else movimientos
+    )
+    if movimiento_id is None:
+        return candidatos[-1] if candidatos else None
+    for movimiento in candidatos:
+        if str(movimiento.get("movimiento_id")) == movimiento_id:
+            return movimiento
+    return None
+
+
+def _sync_cambiar_estado(
+    spreadsheet_id: str,
+    sender_phone: str,
+    movimiento_id: str | None,
+    estado_nuevo: str,
+    accion: str,
+    motivo: str = "",
+    *,
+    solo_activos: bool = False,
+) -> dict[str, Any] | None:
+    """
+    Cambia el estado de un movimiento en su misma fila (anulación lógica, A08/D18),
+    incrementa `version` y deja rastro en auditoría. Idempotente: si el estado ya es
+    el pedido, no reescribe ni audita.
+    """
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
+    _sync_asegurar_esquema_canonico(worksheet, sender_phone)
+    movimientos = _sync_leer_movimientos(spreadsheet_id, sender_phone)
+    objetivo = _buscar_movimiento(movimientos, movimiento_id, solo_activos=solo_activos)
+    if objetivo is None:
+        return None
+
+    antes = {clave: valor for clave, valor in objetivo.items() if clave != "_fila"}
+    if antes["estado"] == estado_nuevo:
+        return {
+            "movimiento_id": antes["movimiento_id"],
+            "movimiento": antes,
+            "antes": antes,
+            "despues": antes,
+            "fila": int(objetivo["_fila"]),
+            "sin_cambio": True,
+        }
+
+    despues = dict(antes)
+    despues["estado"] = estado_nuevo
+    despues["version"] = int(antes.get("version") or 1) + 1
+    fila = int(objetivo["_fila"])
+    worksheet.update(
+        f"A{fila}:M{fila}",
+        [movimiento_a_fila(despues)],
+        value_input_option=ValueInputOption.user_entered,
+    )
+    _sync_registrar_auditoria(
+        spreadsheet_id,
+        "movimiento",
+        str(despues["movimiento_id"]),
+        accion,
+        antes,
+        despues,
+        sender_phone,
+        motivo,
+    )
+    return {
+        "movimiento_id": despues["movimiento_id"],
+        "movimiento": despues,
+        "antes": antes,
+        "despues": despues,
+        "fila": fila,
+        "sin_cambio": False,
+    }
+
+
+def _sync_revertir_movimiento(
+    spreadsheet_id: str,
+    sender_phone: str,
+    movimiento_id: str,
+    antes: dict[str, Any],
+) -> dict[str, Any] | None:
+    """
+    Deshace una corrección restaurando los campos financieros previos (D23).
+
+    La identidad (`movimiento_id`), el teléfono y la fecha de registro no se tocan;
+    `version` se incrementa para dejar rastro de concurrencia y la auditoría registra
+    `deshacer` con el antes/después completo. Solo aplica a movimientos activos: si
+    el movimiento fue anulado después de la corrección, la última acción ya no es la
+    corrección y no corresponde revertirla.
+    """
+    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
+    _sync_asegurar_esquema_canonico(worksheet, sender_phone)
+    movimientos = _sync_leer_movimientos(spreadsheet_id, sender_phone)
+    objetivo = _buscar_movimiento(movimientos, movimiento_id, solo_activos=False)
+    if objetivo is None or objetivo["estado"] not in ESTADOS_ACTIVOS:
+        return None
+
+    actual = {clave: valor for clave, valor in objetivo.items() if clave != "_fila"}
+    restaurado = dict(actual)
+    for campo in (
+        "fecha_movimiento",
+        "monto_centimos",
+        "categoria",
+        "detalle",
+        "tipo_movimiento",
+        "moneda",
+        "contexto_tipo",
+        "estado",
+    ):
+        if antes.get(campo) is not None:
+            restaurado[campo] = antes[campo]
+    restaurado["version"] = int(actual.get("version") or 1) + 1
+
+    fila = int(objetivo["_fila"])
+    worksheet.update(
+        f"A{fila}:M{fila}",
+        [movimiento_a_fila(restaurado)],
+        value_input_option=ValueInputOption.user_entered,
+    )
+    _sync_registrar_auditoria(
+        spreadsheet_id,
+        "movimiento",
+        movimiento_id,
+        "deshacer",
+        actual,
+        restaurado,
+        sender_phone,
+        "deshacer corrección",
+    )
+    return {
+        "movimiento_id": movimiento_id,
+        "movimiento": restaurado,
+        "antes": actual,
+        "despues": restaurado,
+        "fila": fila,
+        "sin_cambio": False,
+    }
+
+
+async def anular_movimiento(
+    sender_phone: str,
+    movimiento_id: str | None = None,
+    motivo: str = "",
+    *,
+    accion: str = "anular",
+) -> dict[str, Any] | None:
+    """
+    Anula lógicamente un movimiento (D18). Sin ID, anula el último activo. Devuelve
+    el resultado con antes/después o None si no hay un movimiento que anular.
+
+    `accion` permite distinguir un deshacer de un registro (A08/D23) en la auditoría.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_cambiar_estado,
+            spreadsheet_id,
+            sender_phone,
+            movimiento_id,
+            "anulado",
+            accion,
+            motivo,
+            solo_activos=True,
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al anular movimiento: {error}")
+        return None
+    except Exception as e:
+        logger.error(f"Error inesperado al anular movimiento: {e}")
+        return None
+
+
+async def reactivar_movimiento(sender_phone: str, movimiento_id: str) -> dict[str, Any] | None:
+    """
+    Reactiva un movimiento anulado (lo devuelve a `confirmado`). Se exige el ID:
+    reactivar "el último" sin confirmación sería ambiguo y peligroso.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_cambiar_estado,
+            spreadsheet_id,
+            sender_phone,
+            movimiento_id,
+            "confirmado",
+            "reactivar",
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al reactivar movimiento: {error}")
+        return None
+    except Exception as e:
+        logger.error(f"Error inesperado al reactivar movimiento: {e}")
+        return None
+
+
+async def restaurar_movimiento(
+    sender_phone: str, movimiento_id: str, estado: str = "confirmado"
+) -> dict[str, Any] | None:
+    """
+    Restaura un movimiento al estado anterior por "deshacé" (D23). La auditoría
+    registra la acción `deshacer`, distinta de una reactivación manual.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_cambiar_estado,
+            spreadsheet_id,
+            sender_phone,
+            movimiento_id,
+            estado,
+            "deshacer",
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al restaurar movimiento: {error}")
+        return None
+    except Exception as e:
+        logger.error(f"Error inesperado al restaurar movimiento: {e}")
+        return None
+
+
+async def revertir_movimiento(
+    sender_phone: str, movimiento_id: str, antes: dict[str, Any]
+) -> dict[str, Any] | None:
+    """
+    Deshace una corrección devolviendo el movimiento al snapshot previo (D23). La
+    auditoría queda como `deshacer`, no como una corrección nueva.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_revertir_movimiento,
+            spreadsheet_id,
+            sender_phone,
+            movimiento_id,
+            antes,
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al revertir corrección: {error}")
+        return None
+    except Exception as e:
+        logger.error(f"Error inesperado al revertir corrección: {e}")
+        return None
+
+
+def _sync_sin_fila(movimiento: dict[str, Any]) -> dict[str, Any]:
+    return {clave: valor for clave, valor in movimiento.items() if clave != "_fila"}
+
+
+async def obtener_movimientos_cliente(
+    sender_phone: str, *, incluir_inactivos: bool = True
+) -> list[dict[str, Any]]:
+    """
+    Lectura canónica de los movimientos del cliente (dicts con estado, tipo, ID y
+    montos en céntimos). Compatible con pestañas históricas: las normaliza al vuelo.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        movimientos = await asyncio.to_thread(
+            _sync_leer_movimientos,
+            spreadsheet_id,
+            sender_phone,
+            incluir_inactivos=incluir_inactivos,
+        )
+        return [_sync_sin_fila(movimiento) for movimiento in movimientos]
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al leer movimientos: {error}")
+        return []
+    except Exception as e:
+        logger.error(f"Error inesperado al leer movimientos: {e}")
+        return []
+
+
+def _json_o_texto(valor: str) -> Any:
+    """Convierte el antes/después de auditoría en dict; si no es JSON, lo deja igual."""
+    if not valor:
+        return None
+    try:
+        return json.loads(valor)
+    except (TypeError, ValueError):
+        return valor
+
+
+def _sync_leer_historial(spreadsheet_id: str, actor_id: str, limite: int) -> list[dict[str, Any]]:
+    """Lee la pestaña de auditoría y devuelve las últimas acciones de un actor."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    try:
+        worksheet = spreadsheet.worksheet(AUDITORIA_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        return []
+
+    filas = worksheet.get_all_values()
+    historial: list[dict[str, Any]] = []
+    for fila in filas[1:]:
+        if len(fila) < 7 or str(fila[6]).strip() != actor_id:
+            continue
+        historial.append(
+            {
+                "auditoria_id": fila[0],
+                "entidad": fila[1],
+                "entidad_id": fila[2],
+                "accion": fila[3],
+                "antes": _json_o_texto(fila[4]),
+                "despues": _json_o_texto(fila[5]),
+                "actor_id": fila[6],
+                "motivo": fila[7] if len(fila) > 7 else "",
+                "fecha": fila[8] if len(fila) > 8 else "",
+            }
+        )
+    return historial[-limite:]
+
+
+async def obtener_historial(sender_phone: str, limite: int = 20) -> list[dict[str, Any]]:
+    """
+    Historial reciente del propio usuario (A08 §5.5): acciones `crear`, `corregir`,
+    `anular`, `reactivar` o `deshacer`, con antes/después. Filtrado por `actor_id`;
+    nunca mezcla movimientos de otros teléfonos.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(_sync_leer_historial, spreadsheet_id, sender_phone, limite)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al leer historial: {error}")
+        return []
+    except Exception as e:
+        logger.error(f"Error inesperado al leer historial: {e}")
+        return []
+
+
+async def migrar_pestana_cliente(sender_phone: str) -> dict[str, Any] | None:
+    """
+    Migra explícitamente la pestaña de un cliente al modelo canónico. Devuelve el
+    reporte de conciliación o None si Sheets falla. Es la misma migración perezosa
+    que ejecutan las escrituras, expuesta para operación y pruebas.
+    """
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(_sync_migrar_pestana, spreadsheet_id, sender_phone)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al migrar pestaña: {error}")
+        return None
+    except Exception as e:
+        logger.error(f"Error inesperado al migrar pestaña: {e}")
         return None
 
 
@@ -316,27 +981,37 @@ async def registrar_consentimiento(sender_phone: str, estado: str) -> bool:
 # ==========================================
 # FASE 6.5.3 — DERECHOS ARCO: EXPORTACIÓN (ADR-0011, Ley 8968)
 # ==========================================
-def _sync_read_client_rows(spreadsheet_id: str, sender_phone: str) -> list[list[Any]]:
+def _sync_read_client_rows(
+    spreadsheet_id: str, sender_phone: str, *, incluir_inactivos: bool = False
+) -> list[list[Any]]:
     """
-    Operación síncrona: lee TODAS las filas de la pestaña del cliente (ADR-0009) sin
-    los encabezados ni filas vacías. Se usa para "exporta mis datos" (Fase 6.5.3).
+    Vista de lectura compatible para reportes, consultas y exportación: filas
+    canónicas de 13 columnas con `monto_centimos` positivo. Por defecto excluye
+    `anulado` y `pendiente` (A02 §4.4); `incluir_inactivos=True` los conserva para
+    la exportación de datos del usuario. No migra ni escribe.
     """
-    worksheet = _sync_get_client_worksheet(spreadsheet_id, sender_phone)
-    rows = worksheet.get_all_values()
-    if rows and rows[0] == TRANSACTION_HEADERS:
-        rows = rows[1:]
-    return [r for r in rows if any(r)]
+    movimientos = _sync_leer_movimientos(
+        spreadsheet_id, sender_phone, incluir_inactivos=incluir_inactivos
+    )
+    return [movimiento_a_fila(movimiento, generar_id=False) for movimiento in movimientos]
 
 
-async def obtener_transacciones_cliente(sender_phone: str) -> list[list[Any]]:
+async def obtener_transacciones_cliente(
+    sender_phone: str, *, incluir_inactivos: bool = False
+) -> list[list[Any]]:
     """
-    Lee todas las transacciones del cliente desde su pestaña ("exporta mis datos",
-    Fase 6.5.3, derechos ARCO). Retorna la lista de filas (sin encabezados) o [] si
-    el cliente no tiene movimientos o hubo un error.
+    Lee las transacciones del cliente desde su pestaña en el contrato de lectura
+    canónico (A02). Retorna filas (sin encabezado) o [] si no hay movimientos o
+    hubo un error. `incluir_inactivos=True` incluye anulados/pendientes (ARCO).
     """
     spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
     try:
-        return await asyncio.to_thread(_sync_read_client_rows, spreadsheet_id, sender_phone)
+        return await asyncio.to_thread(
+            _sync_read_client_rows,
+            spreadsheet_id,
+            sender_phone,
+            incluir_inactivos=incluir_inactivos,
+        )
     except gspread.exceptions.APIError as error:
         logger.error(f"Error de API de gspread al leer datos del cliente: {error}")
         return []
