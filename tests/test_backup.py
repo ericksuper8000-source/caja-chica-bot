@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import gspread
 import pytest
 
 from app.config import settings
@@ -15,6 +16,8 @@ from services.backup_service import (
     _sync_crear_backup,
     _sync_purge_backups,
     crear_backup,
+    restaurar_backup,
+    verificar_backup,
 )
 
 
@@ -177,3 +180,119 @@ async def test_crear_backup_error_retorna_none(tmp_path: Path) -> None:
         ruta = await crear_backup()
 
     assert ruta is None
+
+
+# ==========================================
+# PASO 1 — VERIFICACIÓN Y RESTAURACIÓN DE BACKUPS
+# ==========================================
+class _FakeWorksheet:
+    def __init__(self, title: str) -> None:
+        self.title = title
+        self.filas: list[list[str]] = []
+
+    def clear(self) -> None:
+        self.filas = []
+
+    def update(
+        self, rango: str, valores: list[list[str]], value_input_option: object = None
+    ) -> None:
+        self.filas = [list(fila) for fila in valores]
+
+
+class _FakeSpreadsheet:
+    def __init__(self) -> None:
+        self.tabs: dict[str, _FakeWorksheet] = {}
+
+    def worksheet(self, title: str) -> _FakeWorksheet:
+        if title not in self.tabs:
+            raise gspread.exceptions.WorksheetNotFound(title)
+        return self.tabs[title]
+
+    def add_worksheet(self, title: str, rows: int, cols: int) -> _FakeWorksheet:
+        worksheet = _FakeWorksheet(title)
+        self.tabs[title] = worksheet
+        return worksheet
+
+
+def _backup_de_prueba(tmp_path: Path) -> Path:
+    pestana = MagicMock()
+    pestana.title = "Cliente"
+    pestana.get_all_values.return_value = [
+        ["fecha", "monto", "categoria", "detalle", "telefono"],
+        ["2026-08-20 19:00:00", "-3000", "Alimentación", "Almuerzo", "50660646370"],
+    ]
+    spreadsheet = MagicMock()
+    spreadsheet.id = "hoja_restore"
+    spreadsheet.title = "Caja Chica"
+    spreadsheet.worksheets.return_value = [pestana]
+    return _sync_crear_backup(spreadsheet, tmp_path)
+
+
+def test_verificar_backup_valido(tmp_path: Path) -> None:
+    ruta = _backup_de_prueba(tmp_path)
+
+    reporte = verificar_backup(ruta)
+
+    assert reporte["valido"] is True
+    assert reporte["pestanas"] == 1
+    assert reporte["filas"] == 2
+    assert reporte["errores"] == []
+    assert reporte["manifest"]["pestanas"] == "1"
+    assert reporte["manifest"]["filas_totales"] == "2"
+
+
+def test_verificar_backup_detecta_manifiesto_incoherente(tmp_path: Path) -> None:
+    ruta = tmp_path / _nombre_backup(datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC))
+    with zipfile.ZipFile(ruta, "w") as zip_fh:
+        zip_fh.writestr("MANIFEST.txt", "pestanas=1\nfilas_totales=99\n")
+        zip_fh.writestr("Cliente.csv", "fecha,monto\n2026-01-01,-1000\n")
+
+    reporte = verificar_backup(ruta)
+
+    assert reporte["valido"] is False
+    assert "filas_no_coinciden" in reporte["errores"]
+
+
+def test_verificar_backup_inexistente_no_lanza(tmp_path: Path) -> None:
+    reporte = verificar_backup(tmp_path / "no-existe.zip")
+
+    assert reporte["valido"] is False
+    assert reporte["errores"] == ["FileNotFoundError"]
+
+
+@pytest.mark.anyio
+async def test_restaurar_backup_dry_run_no_escribe(tmp_path: Path) -> None:
+    ruta = _backup_de_prueba(tmp_path)
+    spreadsheet = _FakeSpreadsheet()
+
+    resultado = await restaurar_backup(ruta, spreadsheet, dry_run=True)
+
+    assert resultado == {
+        "restaurado": False,
+        "dry_run": True,
+        "pestanas": 1,
+        "filas": 2,
+    }
+    assert spreadsheet.tabs == {}
+
+
+@pytest.mark.anyio
+async def test_restaurar_backup_escribe_en_hoja_existente_y_crea_la_que_falta(
+    tmp_path: Path,
+) -> None:
+    ruta = _backup_de_prueba(tmp_path)
+    spreadsheet = _FakeSpreadsheet()
+    spreadsheet.tabs["Cliente"] = _FakeWorksheet("Cliente")
+
+    resultado = await restaurar_backup(ruta, spreadsheet, dry_run=False)
+
+    assert resultado["restaurado"] is True
+    assert resultado["pestanas"] == 1
+    assert spreadsheet.tabs["Cliente"].filas[0] == [
+        "fecha",
+        "monto",
+        "categoria",
+        "detalle",
+        "telefono",
+    ]
+    assert spreadsheet.tabs["Cliente"].filas[1][1] == "-3000"

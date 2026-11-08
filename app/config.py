@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     BACKUP_CRON_HOUR: int = Field(default=23)
     BACKUP_CRON_MINUTE: int = Field(default=0)
 
+    # Operación (Paso 1): alertas de salud por WhatsApp.
+    # ADMIN_PHONE recibe la alerta si /health deja de responder (formato 506...).
+    ADMIN_PHONE: str = Field(default="")
+    HEALTHCHECK_URL: str = Field(default="http://app:8000/health")
+    # Seguridad #10: máximo de mensajes por teléfono por minuto (0 desactiva el control).
+    RATE_LIMIT_MENSAJES_POR_MINUTO: int = Field(default=20)
+
     # Paso 4 Sprint — resumen semanal automático (Celery beat, hora de Costa Rica).
     # Por defecto: lunes 08:00 CR (fuera del horario de silencio 22:00–07:00).
     RESUMEN_SEMANAL_CRON_DAY_OF_WEEK: int = Field(default=1)

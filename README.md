@@ -275,6 +275,25 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
 
 ---
 
+### Operación (Paso 1, 08/11/2026)
+
+- **Monitoreo:** `/metrics` (uptime + backups) y tarea Celery `verificar_salud_task`
+  cada 5 minutos. Si `/health` cae, avisa por WhatsApp a `ADMIN_PHONE`; al volver,
+  manda recuperación. Una sola alerta por caída (estado en Redis).
+- **Backups:** `scripts/verificar_backup.py` valida un `.zip` contra su `MANIFEST.txt`;
+  `scripts/restaurar_backup.py` hace dry-run por defecto y solo escribe con `--confirmar`
+  (siempre sobre una copia, nunca producción).
+- **Runbook:** `docs/runbook-operacion.md` (incidentes, rollback, restore).
+- **Métricas:** `docs/metricas-operativas.md` (qué mirar y cómo).
+- **Seguridad #10:** límite de **20 mensajes/minuto por teléfono**
+  (`RATE_LIMIT_MENSAJES_POR_MINUTO`), aplicado antes de OpenAI/Sheets; si Redis falla,
+  se permite el mensaje. La rotación de `WHATSAPP_VERIFY_TOKEN` está en el runbook
+  (requiere Meta + `.env.production`).
+- **Config nueva:** `ADMIN_PHONE`, `HEALTHCHECK_URL` y `RATE_LIMIT_MENSAJES_POR_MINUTO`
+  en `.env.example`.
+
+---
+
 ## Arquitectura y Decisiones Técnicas
 
 ```

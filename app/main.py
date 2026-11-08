@@ -1,4 +1,5 @@
 import logging
+import time
 
 import redis.asyncio as aioredis
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -11,6 +12,7 @@ from app.config import settings
 from app.core.security import validar_firma_whatsapp
 from app.core.utils import extraer_datos_audio, extraer_datos_texto
 from app.schemas.whatsapp import WebhookPayload
+from services.metricas_service import contar_backups
 from workers.celery_app import celery_app
 from workers.tasks import download_audio_task, procesar_mensaje_texto_task
 
@@ -23,6 +25,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 TOKEN_VERIFICACION = settings.WHATSAPP_VERIFY_TOKEN
+_INICIO_PROCESO = time.monotonic()
 
 
 @app.get("/health")
@@ -56,6 +59,19 @@ async def health_check() -> dict[str, str]:
     if not overall:
         raise HTTPException(status_code=503, detail=statuses)
     return statuses
+
+
+@app.get("/metrics")
+async def metricas() -> dict[str, object]:
+    """
+    Métricas operativas mínimas (Paso 1): uptime, entorno y backups disponibles.
+    No expone datos de clientes ni contenido de movimientos.
+    """
+    return {
+        "uptime_segundos": int(time.monotonic() - _INICIO_PROCESO),
+        "entorno": settings.ENVIRONMENT,
+        "backups": contar_backups(settings.BACKUP_DIR),
+    }
 
 
 @app.get("/v1/whatsapp/webhook", response_class=PlainTextResponse)

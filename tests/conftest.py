@@ -31,6 +31,14 @@ class FakeRedisMemoria:
     async def set(self, key: str, value: str, ex: int | None = None) -> None:
         self.store[key] = value
 
+    async def incr(self, key: str) -> int:
+        valor = int(self.store.get(key, "0")) + 1
+        self.store[key] = str(valor)
+        return valor
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        return key in self.store
+
     async def delete(self, key: str) -> None:
         self.store.pop(key, None)
 

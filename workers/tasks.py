@@ -82,6 +82,14 @@ from services.export_service import (
     nombre_exportacion,
 )
 from services.modelo_service import monto_con_signo
+from services.monitoreo_service import (
+    CLAVE_ESTADO_SALUD,
+    TEXTO_SIN_ADMIN,
+    TTL_ESTADO_SALUD,
+    consultar_salud,
+    decidir_accion,
+    formatear_mensaje_monitoreo,
+)
 from services.numero_service import (
     TEXTO_CAMBIO_NUMERO_CONFIRMADO,
     TEXTO_CAMBIO_NUMERO_CONFLICTO,
@@ -157,6 +165,7 @@ from services.presupuesto_service import (
     establecer_presupuesto,
     verificar_y_alertar_presupuesto,
 )
+from services.rate_limit_service import permitir_mensaje
 from services.reporte_service import (
     ZONA_CR,
     calcular_resumen,
@@ -204,6 +213,7 @@ TEXTO_ERROR_GUARDADO = (
     "No pude guardar el movimiento en tu hoja. No quedó registrado. "
     "Intentá de nuevo en unos segundos."
 )
+TEXTO_RATE_LIMIT = "Estás mandando muchos mensajes seguidos. Esperá un minuto y volvé a intentar."
 
 
 # ==========================================
@@ -216,6 +226,19 @@ async def _dedupe_redis() -> "aioredis.Redis":
         settings.REDIS_URL, socket_connect_timeout=3
     )
     return cliente  # type: ignore[no-any-return]
+
+
+async def _rate_limit_ok(sender_phone: str) -> bool:
+    """Límite por teléfono (Seguridad #10): si Redis falla, no bloquea al usuario."""
+    try:
+        r = await _dedupe_redis()
+        try:
+            return await permitir_mensaje(r, sender_phone)
+        finally:
+            await r.aclose()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("rate_limit: no se pudo evaluar (%s); se permite", exc)
+        return True
 
 
 def _media_id_de(file_path: str | None) -> str | None:
@@ -918,6 +941,11 @@ async def _procesar_pipeline(
         )
         return file_path or ""
 
+    # Seguridad #10 — límite por teléfono antes de gastar OpenAI/Sheets.
+    if not await _rate_limit_ok(sender_phone):
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_RATE_LIMIT)
+        return file_path or ""
+
     # D23 — el siguiente mensaje procesado cierra la ventana de deshacer, incluso si
     # es administrativo (consentimiento, STOP, cambio de número). El propio "deshacé"
     # no la cierra: A08 lo consume después para poder revertir la última acción.
@@ -1457,3 +1485,66 @@ def enviar_resumenes_semanales_task() -> str:
         f"omitidos={resultado['omitidos']} "
         f"errores={resultado['errores']}"
     )
+
+
+# ==========================================
+# Paso 1 de operación — monitoreo de salud
+# ==========================================
+async def _leer_estado_salud() -> str | None:
+    """Lee el último estado de salud de Redis; ante fallo degrada a desconocido."""
+    try:
+        r = await _dedupe_redis()
+        try:
+            valor = await r.get(CLAVE_ESTADO_SALUD)
+        finally:
+            await r.aclose()
+        if isinstance(valor, bytes):
+            valor = valor.decode("utf-8")
+        return str(valor) if valor else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("monitoreo: no se pudo leer el estado (%s)", exc)
+        return None
+
+
+async def _guardar_estado_salud(estado: str) -> None:
+    """Guarda `ok`/`caido` con TTL para no repetir alertas indefinidamente."""
+    try:
+        r = await _dedupe_redis()
+        try:
+            await r.set(CLAVE_ESTADO_SALUD, estado, ex=TTL_ESTADO_SALUD)
+        finally:
+            await r.aclose()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("monitoreo: no se pudo guardar el estado (%s)", exc)
+
+
+async def _verificar_salud() -> dict[str, Any]:
+    """Consulta /health, alerta solo en la transición a caído y avisa la recuperación."""
+    salud = await consultar_salud()
+    estado_previo = await _leer_estado_salud()
+    accion = decidir_accion(estado_previo, bool(salud.get("ok")))
+
+    if accion in ("alertar", "recuperar"):
+        if settings.ADMIN_PHONE:
+            mensaje = formatear_mensaje_monitoreo(accion, salud)
+            await enviar_mensaje_whatsapp(to_phone=settings.ADMIN_PHONE, mensaje=mensaje)
+        else:
+            logger.warning(TEXTO_SIN_ADMIN)
+
+    await _guardar_estado_salud("ok" if salud.get("ok") else "caido")
+    return {
+        "ok": bool(salud.get("ok")),
+        "accion": accion,
+        "estado_previo": estado_previo,
+        "detalle": salud.get("detalle"),
+    }
+
+
+@celery_app.task(name="workers.tasks.verificar_salud_task")  # type: ignore[untyped-decorator]
+def verificar_salud_task() -> str:
+    """
+    Paso 1 de operación — chequeo de salud programado cada 5 minutos por Celery beat.
+    No reinicia nada ni toca el sheet: solo observa y avisa.
+    """
+    resultado = asyncio.run(_verificar_salud())
+    return f"ok={resultado['ok']} accion={resultado['accion']}"

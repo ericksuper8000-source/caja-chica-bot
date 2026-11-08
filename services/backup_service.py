@@ -8,6 +8,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import gspread
+from gspread.utils import ValueInputOption, rowcol_to_a1
+
 from app.config import settings
 from services.sheets_service import get_sheets_client
 
@@ -96,6 +99,130 @@ def _sync_purge_backups(backup_dir: Path, retention_days: int) -> list[Path]:
     if eliminados:
         logger.info(f"Backups purgados (retención {retention_days} días): {len(eliminados)}.")
     return eliminados
+
+
+def _sync_leer_backup(ruta: Path) -> dict[str, Any]:
+    """
+    Lee un .zip de backup y devuelve su MANIFEST y sus hojas como listas de filas.
+
+    No escribe nada: es la base de la verificación y del dry-run de restauración.
+    """
+    if not ruta.exists():
+        raise FileNotFoundError(f"no existe el backup: {ruta}")
+    with zipfile.ZipFile(ruta) as zip_fh:
+        nombres = zip_fh.namelist()
+        if "MANIFEST.txt" not in nombres:
+            raise ValueError("el backup no contiene MANIFEST.txt")
+        manifest: dict[str, str] = {}
+        for linea in zip_fh.read("MANIFEST.txt").decode("utf-8").splitlines():
+            if "=" in linea:
+                clave, valor = linea.split("=", 1)
+                manifest[clave.strip()] = valor.strip()
+
+        hojas: dict[str, list[list[str]]] = {}
+        for nombre in nombres:
+            if not nombre.endswith(".csv"):
+                continue
+            with zip_fh.open(nombre) as fh:
+                lector = csv.reader(io.TextIOWrapper(fh, encoding="utf-8"))
+                hojas[nombre[:-4]] = [list(fila) for fila in lector]
+    return {"manifest": manifest, "hojas": hojas}
+
+
+def verificar_backup(ruta: Path) -> dict[str, Any]:
+    """
+    Verifica que un backup se pueda leer y que sus conteos coincidan con el MANIFEST.
+
+    Devuelve un reporte apto para operación: `valido`, cantidad de pestañas/filas,
+    manifest y errores. Un backup que no concilia no se debe usar para restaurar.
+    """
+    try:
+        contenido = _sync_leer_backup(ruta)
+        manifest = contenido["manifest"]
+        hojas = contenido["hojas"]
+        filas = sum(len(hoja) for hoja in hojas.values())
+        errores: list[str] = []
+
+        if not hojas:
+            errores.append("sin_hojas")
+        if "pestanas" not in manifest:
+            errores.append("manifest_sin_pestanas")
+        elif int(manifest["pestanas"]) != len(hojas):
+            errores.append("pestanas_no_coinciden")
+        if "filas_totales" not in manifest:
+            errores.append("manifest_sin_filas")
+        elif int(manifest["filas_totales"]) != filas:
+            errores.append("filas_no_coinciden")
+
+        return {
+            "valido": not errores,
+            "pestanas": len(hojas),
+            "filas": filas,
+            "manifest": manifest,
+            "errores": errores,
+        }
+    except Exception as error:  # noqa: BLE001 - un backup roto no debe tumbar el proceso
+        logger.error("Backup inválido %s: %s", ruta, error)
+        return {
+            "valido": False,
+            "pestanas": 0,
+            "filas": 0,
+            "manifest": {},
+            "errores": [type(error).__name__],
+        }
+
+
+def _sync_restaurar_en_worksheet(worksheet: Any, filas: list[list[Any]]) -> None:
+    """Reemplaza el contenido de una pestaña con las filas de un backup."""
+    worksheet.clear()
+    if not filas:
+        return
+    ancho = max(len(fila) for fila in filas)
+    normalizadas = [list(fila) + [""] * (ancho - len(fila)) for fila in filas]
+    rango = f"A1:{rowcol_to_a1(len(normalizadas), ancho)}"
+    worksheet.update(
+        rango,
+        normalizadas,
+        value_input_option=ValueInputOption.user_entered,
+    )
+
+
+async def restaurar_backup(ruta: Path, spreadsheet: Any, *, dry_run: bool = True) -> dict[str, Any]:
+    """
+    Restaura un backup en un spreadsheet.
+
+    `dry_run=True` (default) solo lee y cuenta: nunca escribe. Para restaurar de verdad
+    hay que pasar `dry_run=False` y usar SIEMPRE una copia del spreadsheet, no producción.
+    """
+    contenido = await asyncio.to_thread(_sync_leer_backup, ruta)
+    hojas = contenido["hojas"]
+    filas_totales = sum(len(filas) for filas in hojas.values())
+    if dry_run:
+        return {
+            "restaurado": False,
+            "dry_run": True,
+            "pestanas": len(hojas),
+            "filas": filas_totales,
+        }
+
+    for titulo, filas in hojas.items():
+        try:
+            worksheet = spreadsheet.worksheet(titulo)
+        except gspread.exceptions.WorksheetNotFound:
+            ancho = max((len(fila) for fila in filas), default=1)
+            worksheet = spreadsheet.add_worksheet(
+                title=titulo,
+                rows=max(len(filas), 1),
+                cols=max(ancho, 1),
+            )
+        await asyncio.to_thread(_sync_restaurar_en_worksheet, worksheet, filas)
+
+    return {
+        "restaurado": True,
+        "dry_run": False,
+        "pestanas": len(hojas),
+        "filas": filas_totales,
+    }
 
 
 async def crear_backup() -> Path | None:
