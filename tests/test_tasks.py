@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services.a08_service import formatear_confirmacion_movimiento
 from services.duplicado_service import (
     TEXTO_CONFIRMACION_DUPLICADO,
     TEXTO_DUPLICADO_CONFIRMADO,
@@ -17,6 +18,37 @@ from services.politica_service import POLITICA_VERSION
 
 EXPECTED_DIR = os.path.join(tempfile.gettempdir(), "caja_chica")
 EXPECTED_PATH = os.path.join(EXPECTED_DIR, "12345.ogg")
+
+
+def _movimiento_canonico(
+    movimiento_id: str = "mov-1",
+    *,
+    monto_centimos: int = 150000,
+    categoria: str = "Alimentación",
+    detalle: str = "almuerzo",
+    tipo: str = "gasto",
+    estado: str = "confirmado",
+    version: int = 1,
+    fecha: str = "2026-11-08 18:00:00",
+) -> dict[str, object]:
+    """Movimiento canónico mínimo para verificar confirmaciones A08 en el pipeline."""
+    monto = monto_centimos // 100
+    return {
+        "fecha_movimiento": fecha,
+        "monto_centimos": monto_centimos,
+        "categoria": categoria,
+        "detalle": detalle,
+        "telefono": "50688888888",
+        "movimiento_id": movimiento_id,
+        "tipo_movimiento": tipo,
+        "moneda": "CRC",
+        "contexto_tipo": "personal",
+        "estado": estado,
+        "version": version,
+        "fecha_registro": fecha,
+        "origen": "chat",
+        "monto": -monto if tipo == "gasto" else monto,
+    }
 
 
 def test_download_audio_task_exito() -> None:
@@ -270,6 +302,19 @@ def test_download_audio_task_corregir_actualiza() -> None:
         "tipo_movimiento": "Gasto",
         "detalle": "Pasajes",
     }
+    antes = _movimiento_canonico()
+    despues = _movimiento_canonico(
+        monto_centimos=600000,
+        categoria="Transporte",
+        detalle="Pasajes",
+        estado="corregido",
+        version=2,
+    )
+    resultado_correccion = {
+        "movimiento_id": "mov-1",
+        "antes": antes,
+        "despues": despues,
+    }
     with (
         patch("workers.tasks.transcribir_audio_whisper", return_value="texto"),
         patch(
@@ -281,7 +326,7 @@ def test_download_audio_task_corregir_actualiza() -> None:
         patch("workers.tasks.append_transaction_to_sheet") as mock_sheet,
         patch(
             "workers.tasks.update_last_transaction_to_sheet",
-            return_value=[-6000, "Transporte", "Pasajes"],
+            return_value=resultado_correccion,
         ) as mock_update,
         patch("workers.tasks.httpx.Client"),
         patch("workers.tasks.os.makedirs"),
@@ -297,7 +342,7 @@ def test_download_audio_task_corregir_actualiza() -> None:
         mock_update.assert_called_once_with(data_corregir, "50688888888")
         mock_whatsapp.assert_called_with(
             to_phone="50688888888",
-            mensaje="Corregido: Transporte - ₡6000",
+            mensaje=formatear_confirmacion_movimiento(despues, verbo="Corregí"),
         )
 
 
@@ -682,7 +727,8 @@ def test_p0_1_si_sheets_falla_no_confirma_ni_marca_dedupe() -> None:
 def test_p0_1_reintento_tras_fallo_si_guarda_y_marca() -> None:
     redis_falso = _FakeRedis()
     datos = _entrada_registro(1500, "Alimentación", "sándwich")
-    stack, m = _contexto_8_6_2(redis_falso, datos, sheet_side_effect=[False, True])
+    movimiento = _movimiento_canonico()
+    stack, m = _contexto_8_6_2(redis_falso, datos, sheet_side_effect=[False, movimiento])
 
     with stack:
         from workers.tasks import TEXTO_ERROR_GUARDADO, procesar_mensaje_texto_task
@@ -694,7 +740,7 @@ def test_p0_1_reintento_tras_fallo_si_guarda_y_marca() -> None:
         procesar_mensaje_texto_task("50688888888", "gasté 1500 en un sándwich")
         assert m["sheet"].await_count == 2
         assert m["wa"].call_args_list[-1].kwargs["mensaje"] == (
-            "Transacción registrada: Alimentación - ₡1500"
+            formatear_confirmacion_movimiento(movimiento)
         )
         assert clave_ultimo("50688888888") in redis_falso.store
 

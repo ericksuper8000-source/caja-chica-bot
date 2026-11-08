@@ -5,6 +5,7 @@ import pytest
 from services.whatsapp_service import (
     LIMITE_CAPTION_WHATSAPP,
     dividir_mensaje_largo,
+    enviar_documento_whatsapp,
     enviar_imagen_whatsapp,
     enviar_mensaje_whatsapp,
 )
@@ -129,5 +130,87 @@ async def test_enviar_imagen_whatsapp_error_devuelve_false() -> None:
         mock_post.side_effect = RuntimeError("sin red")
 
         resultado = await enviar_imagen_whatsapp("50612345678", b"png", "x")
+
+    assert resultado is False
+
+
+@pytest.mark.anyio
+async def test_enviar_documento_whatsapp_sube_y_envia() -> None:
+    """Dos llamadas a Meta: subir el archivo (media) y enviar el mensaje tipo document."""
+    subida = _respuesta_meta({"id": "media_doc_1"})
+    envio = _respuesta_meta({"messages": [{"id": "wamid.doc"}]})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.side_effect = [subida, envio]
+
+        resultado = await enviar_documento_whatsapp(
+            "50612345678",
+            b"fecha,tipo,monto\r\n",
+            "movimientos.csv",
+            "text/csv",
+            "caption corto",
+        )
+
+    assert resultado is True
+    assert mock_post.await_count == 2
+
+    subida_kwargs = mock_post.call_args_list[0].kwargs
+    assert subida_kwargs["data"]["type"] == "text/csv"
+    assert subida_kwargs["files"]["file"] == (
+        "movimientos.csv",
+        b"fecha,tipo,monto\r\n",
+        "text/csv",
+    )
+
+    payload = mock_post.call_args_list[1].kwargs["json"]
+    assert payload["type"] == "document"
+    assert payload["document"] == {
+        "id": "media_doc_1",
+        "filename": "movimientos.csv",
+        "caption": "caption corto",
+    }
+
+
+@pytest.mark.anyio
+async def test_enviar_documento_whatsapp_recorta_caption_al_limite() -> None:
+    subida = _respuesta_meta({"id": "media_doc_2"})
+    envio = _respuesta_meta({"messages": [{"id": "wamid.doc2"}]})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.side_effect = [subida, envio]
+
+        resultado = await enviar_documento_whatsapp(
+            "50612345678", b"datos", "movimientos.xlsx", "application/xlsx", "x" * 2000
+        )
+
+    assert resultado is True
+    caption = mock_post.call_args_list[1].kwargs["json"]["document"]["caption"]
+    assert len(caption) == LIMITE_CAPTION_WHATSAPP
+
+
+@pytest.mark.anyio
+async def test_enviar_documento_whatsapp_sin_media_id_devuelve_false() -> None:
+    subida = _respuesta_meta({})
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.side_effect = [subida]
+
+        resultado = await enviar_documento_whatsapp(
+            "50612345678", b"datos", "movimientos.csv", "text/csv"
+        )
+
+    assert resultado is False
+    assert mock_post.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_enviar_documento_whatsapp_error_devuelve_false() -> None:
+    """Cualquier fallo de red se degrada a False para que el pipeline mande texto."""
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.side_effect = RuntimeError("sin red")
+
+        resultado = await enviar_documento_whatsapp(
+            "50612345678", b"datos", "movimientos.csv", "text/csv"
+        )
 
     assert resultado is False
