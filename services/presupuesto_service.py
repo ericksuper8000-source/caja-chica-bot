@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from services.consulta_service import _parse_fecha
+from services.modelo_service import monto_con_signo
 from services.sheets_service import (
     eliminar_presupuesto_sheet,
     guardar_presupuesto_sheet,
@@ -104,7 +105,7 @@ def calcular_gastado_mes(
         ):
             continue
         try:
-            monto = int(str(row[1]))
+            monto = monto_con_signo(row)
         except (TypeError, ValueError):
             continue
         if monto < 0:

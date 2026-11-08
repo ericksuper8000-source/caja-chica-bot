@@ -1,9 +1,10 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import gspread
 import pytest
 from gspread.utils import ValueInputOption
 
+from services.modelo_service import TRANSACTION_HEADERS
 from services.sheets_service import (
     USUARIOS_HEADERS,
     append_transaction_to_sheet,
@@ -13,6 +14,36 @@ from services.sheets_service import (
     update_last_transaction_to_sheet,
     upsert_usuario,
 )
+
+
+def _fila_canonica(
+    fecha: str,
+    monto_centimos: int,
+    categoria: str,
+    detalle: str,
+    telefono: str,
+    *,
+    movimiento_id: str = "mov-1",
+    tipo: str = "gasto",
+    estado: str = "confirmado",
+    version: int = 1,
+) -> list[object]:
+    """Fila canónica de 13 columnas tal como se guarda en la pestaña del cliente."""
+    return [
+        fecha,
+        monto_centimos,
+        categoria,
+        detalle,
+        telefono,
+        movimiento_id,
+        tipo,
+        "CRC",
+        "personal",
+        estado,
+        version,
+        fecha,
+        "chat",
+    ]
 
 
 @patch("services.sheets_service._sheets_client", None)
@@ -33,9 +64,10 @@ def test_get_sheets_client_success(mock_service_account):
 
 
 @pytest.mark.anyio
+@patch("services.sheets_service.registrar_auditoria", new_callable=AsyncMock)
 @patch("services.sheets_service.get_sheets_client")
-async def test_append_transaction_gasto_success(mock_get_sheets_client):
-    """Prueba la inserción exitosa de un Gasto transformando el monto a negativo."""
+async def test_append_transaction_gasto_success(mock_get_sheets_client, mock_registrar_auditoria):
+    """Prueba la inserción exitosa de un Gasto en el modelo canónico (céntimos + tipo)."""
     # Configurar la cadena de mocks de gspread
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
@@ -44,6 +76,7 @@ async def test_append_transaction_gasto_success(mock_get_sheets_client):
     mock_get_sheets_client.return_value = mock_client
     mock_client.open_by_key.return_value = mock_spreadsheet
     mock_spreadsheet.worksheet.return_value = mock_worksheet
+    mock_worksheet.get_all_values.return_value = [TRANSACTION_HEADERS]
 
     # Datos de prueba provenientes del parser de IA
     fake_transaction = {
@@ -56,26 +89,35 @@ async def test_append_transaction_gasto_success(mock_get_sheets_client):
     # Ejecutar la función (Debe ser asíncrona usando run_in_executor por debajo)
     result = await append_transaction_to_sheet(fake_transaction, "50688888888")
 
-    assert result is True
+    assert isinstance(result, dict)
+    assert result["monto_centimos"] == 450000
+    assert result["tipo_movimiento"] == "gasto"
+    assert result["movimiento_id"]
     mock_client.open_by_key.assert_called_once()
     mock_worksheet.append_row.assert_called_once()
+    mock_registrar_auditoria.assert_awaited_once()
 
-    # Validar que los datos enviados a la fila de Google Sheets sean correctos
+    # Validar que los datos enviados a la fila canónica sean correctos
     called_args = mock_worksheet.append_row.call_args[0][0]
 
-    # Estructura esperada: [Fecha/Timestamp, Monto, Categoría, Detalle, Teléfono]
-    assert called_args[1] == -4500  # Transformado a negativo por ser un Gasto
+    # Estructura: [fecha, monto_centimos, categoría, detalle, teléfono, id, tipo, ...]
+    assert called_args[1] == 450000  # céntimos positivos; el tipo define el signo
     assert called_args[2] == "Alimentación"
     assert called_args[3] == "Almuerzo ejecutivo"
     assert called_args[4] == "50688888888"
+    assert called_args[6] == "gasto"
+    assert called_args[9] == "confirmado"
 
 
 @pytest.mark.anyio
+@patch("services.sheets_service.registrar_auditoria", new_callable=AsyncMock)
 @patch("services.sheets_service.get_sheets_client")
-async def test_append_transaction_crea_pestana_cliente_si_no_existe(mock_get_sheets_client):
+async def test_append_transaction_crea_pestana_cliente_si_no_existe(
+    mock_get_sheets_client, mock_registrar_auditoria
+):
     """
     ADR-0009 (6.5.2): si la pestaña del cliente (título = teléfono) no existe, se crea
-    con los encabezados de transacción antes de insertar la fila.
+    con el encabezado canónico antes de insertar la fila.
     """
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
@@ -86,6 +128,7 @@ async def test_append_transaction_crea_pestana_cliente_si_no_existe(mock_get_she
     # La pestaña no existe -> se lanza WorksheetNotFound y se crea
     mock_spreadsheet.worksheet.side_effect = gspread.exceptions.WorksheetNotFound
     mock_spreadsheet.add_worksheet.return_value = mock_worksheet
+    mock_worksheet.get_all_values.return_value = [TRANSACTION_HEADERS]
 
     fake_transaction = {
         "monto": 3000,
@@ -96,22 +139,28 @@ async def test_append_transaction_crea_pestana_cliente_si_no_existe(mock_get_she
 
     result = await append_transaction_to_sheet(fake_transaction, "50660646370")
 
-    assert result is True
-    # La pestaña se crea con el teléfono como título y los encabezados de transacción
-    mock_spreadsheet.add_worksheet.assert_called_once_with(title="50660646370", rows=100, cols=10)
+    assert isinstance(result, dict)
+    # La pestaña se crea con el teléfono como título y el encabezado canónico
+    mock_spreadsheet.add_worksheet.assert_called_once_with(
+        title="50660646370", rows=100, cols=len(TRANSACTION_HEADERS)
+    )
     mock_worksheet.append_row.assert_any_call(
-        ["fecha", "monto", "categoria", "detalle", "telefono"],
+        TRANSACTION_HEADERS,
         value_input_option=ValueInputOption.user_entered,
     )
     # Y la fila se inserta en esa misma pestaña
     inserted = mock_worksheet.append_row.call_args_list[-1].args[0]
-    assert inserted[1] == -3000
+    assert inserted[1] == 300000
     assert inserted[4] == "50660646370"
+    mock_registrar_auditoria.assert_awaited_once()
 
 
 @pytest.mark.anyio
+@patch("services.sheets_service.registrar_auditoria", new_callable=AsyncMock)
 @patch("services.sheets_service.get_sheets_client")
-async def test_append_transaction_escribe_en_pestana_del_cliente(mock_get_sheets_client):
+async def test_append_transaction_escribe_en_pestana_del_cliente(
+    mock_get_sheets_client, mock_registrar_auditoria
+):
     """
     ADR-0009 (6.5.2): la fila se inserta en la pestaña del remitente (título = teléfono),
     no en una hoja global.
@@ -123,6 +172,7 @@ async def test_append_transaction_escribe_en_pestana_del_cliente(mock_get_sheets
     mock_get_sheets_client.return_value = mock_client
     mock_client.open_by_key.return_value = mock_spreadsheet
     mock_spreadsheet.worksheet.return_value = mock_worksheet
+    mock_worksheet.get_all_values.return_value = [TRANSACTION_HEADERS]
 
     fake_transaction = {
         "monto": 500,
@@ -139,8 +189,11 @@ async def test_append_transaction_escribe_en_pestana_del_cliente(mock_get_sheets
 
 
 @pytest.mark.anyio
+@patch("services.sheets_service._sync_registrar_auditoria")
 @patch("services.sheets_service.get_sheets_client")
-async def test_update_last_transaction_usa_pestana_del_cliente(mock_get_sheets_client):
+async def test_update_last_transaction_usa_pestana_del_cliente(
+    mock_get_sheets_client, mock_auditoria
+):
     """
     ADR-0009 (6.5.2): la corrección lee y actualiza SOLO la pestaña del remitente.
     """
@@ -152,13 +205,16 @@ async def test_update_last_transaction_usa_pestana_del_cliente(mock_get_sheets_c
     mock_client.open_by_key.return_value = mock_spreadsheet
     mock_spreadsheet.worksheet.return_value = mock_worksheet
 
-    mock_worksheet.col_values.return_value = ["teléfono", "50660646370"]
-    mock_worksheet.row_values.return_value = [
-        "2026-08-20 19:00:00",
-        "-2000",
-        "Alimentación",
-        "almuerzo",
-        "50660646370",
+    mock_worksheet.get_all_values.return_value = [
+        TRANSACTION_HEADERS,
+        _fila_canonica(
+            "2026-08-20 19:00:00",
+            200000,
+            "Alimentación",
+            "almuerzo",
+            "50660646370",
+            movimiento_id="mov-1",
+        ),
     ]
 
     fake_transaction = {
@@ -170,15 +226,23 @@ async def test_update_last_transaction_usa_pestana_del_cliente(mock_get_sheets_c
 
     result = await update_last_transaction_to_sheet(fake_transaction, "50660646370")
 
-    assert result == [-2500, "Alimentación", "almuerzo"]
+    assert result is not None
+    assert result["monto"] == -2500
+    assert result["categoria"] == "Alimentación"
+    assert result["despues"]["estado"] == "corregido"
+    assert result["despues"]["version"] == 2
     # Se resuelve la pestaña del cliente en la lectura y en la actualización
     assert mock_spreadsheet.worksheet.call_count == 2
     mock_spreadsheet.worksheet.assert_called_with("50660646370")
+    mock_auditoria.assert_called_once()
 
 
 @pytest.mark.anyio
+@patch("services.sheets_service.registrar_auditoria", new_callable=AsyncMock)
 @patch("services.sheets_service.get_sheets_client")
-async def test_append_transaction_cada_cliente_tiene_su_pestana(mock_get_sheets_client):
+async def test_append_transaction_cada_cliente_tiene_su_pestana(
+    mock_get_sheets_client, mock_registrar_auditoria
+):
     """
     ADR-0009 (6.5.2): dos clientes distintos resuelven pestañas distintas (aislamiento).
     """
@@ -190,6 +254,8 @@ async def test_append_transaction_cada_cliente_tiene_su_pestana(mock_get_sheets_
     mock_get_sheets_client.return_value = mock_client
     mock_client.open_by_key.return_value = mock_spreadsheet
     mock_spreadsheet.worksheet.side_effect = [mock_worksheet_a, mock_worksheet_b]
+    mock_worksheet_a.get_all_values.return_value = [TRANSACTION_HEADERS]
+    mock_worksheet_b.get_all_values.return_value = [TRANSACTION_HEADERS]
 
     base = {"categoria": "Ventas", "tipo_movimiento": "Ingreso", "detalle": "venta"}
 
@@ -205,7 +271,7 @@ async def test_append_transaction_cada_cliente_tiene_su_pestana(mock_get_sheets_
 @pytest.mark.anyio
 @patch("services.sheets_service.get_sheets_client")
 async def test_obtener_transacciones_cliente_retorna_filas(mock_get_sheets_client):
-    """6.5.3: 'exporta mis datos' lee la pestaña del cliente y omite los encabezados."""
+    """6.5.3/A02: 'exporta mis datos' lee la pestaña y normaliza al contrato canónico."""
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
     mock_worksheet = MagicMock()
@@ -222,7 +288,10 @@ async def test_obtener_transacciones_cliente_retorna_filas(mock_get_sheets_clien
     rows = await obtener_transacciones_cliente("50660646370")
 
     assert len(rows) == 1
-    assert rows[0][1] == "-3000"
+    assert len(rows[0]) == len(TRANSACTION_HEADERS)
+    assert rows[0][1] == 300000  # 3000 colones → 300000 céntimos
+    assert rows[0][6] == "gasto"
+    assert rows[0][9] == "confirmado"
     mock_spreadsheet.worksheet.assert_called_once_with("50660646370")
 
 
@@ -238,9 +307,7 @@ async def test_obtener_transacciones_cliente_solo_encabezados(mock_get_sheets_cl
     mock_client.open_by_key.return_value = mock_spreadsheet
     mock_spreadsheet.worksheet.return_value = mock_worksheet
 
-    mock_worksheet.get_all_values.return_value = [
-        ["fecha", "monto", "categoria", "detalle", "telefono"]
-    ]
+    mock_worksheet.get_all_values.return_value = [TRANSACTION_HEADERS]
 
     rows = await obtener_transacciones_cliente("50660646370")
 
@@ -248,9 +315,10 @@ async def test_obtener_transacciones_cliente_solo_encabezados(mock_get_sheets_cl
 
 
 @pytest.mark.anyio
+@patch("services.sheets_service._sync_registrar_auditoria")
 @patch("services.sheets_service.get_sheets_client")
-async def test_update_last_transaction_success(mock_get_sheets_client):
-    """Prueba que la corrección localice la última fila del teléfono y actualice B:E."""
+async def test_update_last_transaction_success(mock_get_sheets_client, mock_auditoria):
+    """La corrección reescribe la última fila activa completa (A:M) y sube la versión."""
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
     mock_worksheet = MagicMock()
@@ -259,21 +327,24 @@ async def test_update_last_transaction_success(mock_get_sheets_client):
     mock_client.open_by_key.return_value = mock_spreadsheet
     mock_spreadsheet.worksheet.return_value = mock_worksheet
 
-    # Columna de teléfono: encabezado + filas de otros usuarios + la del usuario (filas 3 y 5)
-    mock_worksheet.col_values.return_value = [
-        "teléfono",
-        "50611111111",
-        "50688888888",
-        "50611111111",
-        "50688888888",
-    ]
-    # Fila previa leída para el merge del delta: [fecha, monto, categoria, detalle, telefono]
-    mock_worksheet.row_values.return_value = [
-        "2026-08-13 21:00:00",
-        "-2000",
-        "Alimentación",
-        "Almuerzo",
-        "50688888888",
+    mock_worksheet.get_all_values.return_value = [
+        TRANSACTION_HEADERS,
+        _fila_canonica(
+            "2026-08-13 21:00:00",
+            200000,
+            "Alimentación",
+            "Almuerzo",
+            "50611111111",
+            movimiento_id="mov-otro",
+        ),
+        _fila_canonica(
+            "2026-08-13 21:00:00",
+            200000,
+            "Alimentación",
+            "Almuerzo",
+            "50688888888",
+            movimiento_id="mov-1",
+        ),
     ]
 
     fake_transaction = {
@@ -285,16 +356,29 @@ async def test_update_last_transaction_success(mock_get_sheets_client):
 
     result = await update_last_transaction_to_sheet(fake_transaction, "50688888888")
 
-    assert result == [-6000, "Transporte", "Pasajes"]
-    # Debe actualizar la última coincidencia (fila 5), columnas B:E, sin tocar la fecha
+    assert result is not None
+    assert result["monto"] == -6000
+    assert result["categoria"] == "Transporte"
+    assert result["despues"]["movimiento_id"] == "mov-1"
+    assert result["despues"]["version"] == 2
+    # Debe actualizar la fila 3 completa, sin tocar la fecha de movimiento
     called_args = mock_worksheet.update.call_args[0]
-    assert called_args[0] == "B5:E5"
-    assert called_args[1] == [[-6000, "Transporte", "Pasajes", "50688888888"]]
+    assert called_args[0] == "A3:M3"
+    fila = called_args[1][0]
+    assert fila[0] == "2026-08-13 21:00:00"
+    assert fila[1] == 600000
+    assert fila[2] == "Transporte"
+    assert fila[6] == "gasto"
+    assert fila[9] == "corregido"
+    assert fila[10] == 2
 
 
 @pytest.mark.anyio
+@patch("services.sheets_service._sync_registrar_auditoria")
 @patch("services.sheets_service.get_sheets_client")
-async def test_update_last_transaction_correccion_parcial_preserva(mock_get_sheets_client):
+async def test_update_last_transaction_correccion_parcial_preserva(
+    mock_get_sheets_client, mock_auditoria
+):
     """
     Trampa H (hallazgo 13/08/2026): corrección de SOLO monto conserva la categoría y
     el detalle de la fila anterior. El LLM devuelve monto y el resto en None.
@@ -307,18 +391,17 @@ async def test_update_last_transaction_correccion_parcial_preserva(mock_get_shee
     mock_client.open_by_key.return_value = mock_spreadsheet
     mock_spreadsheet.worksheet.return_value = mock_worksheet
 
-    mock_worksheet.col_values.return_value = [
-        "teléfono",
-        "50611111111",
-        "50688888888",
-    ]
     # Fila previa: un gasto de almuerzo registrado antes
-    mock_worksheet.row_values.return_value = [
-        "2026-08-13 21:32:54",
-        "-2000",
-        "Alimentación",
-        "almuerzo",
-        "50688888888",
+    mock_worksheet.get_all_values.return_value = [
+        TRANSACTION_HEADERS,
+        _fila_canonica(
+            "2026-08-13 21:32:54",
+            200000,
+            "Alimentación",
+            "almuerzo",
+            "50688888888",
+            movimiento_id="mov-1",
+        ),
     ]
 
     # Delta: solo corrige el monto; el resto viene null (no mencionado)
@@ -332,14 +415,24 @@ async def test_update_last_transaction_correccion_parcial_preserva(mock_get_shee
     result = await update_last_transaction_to_sheet(fake_transaction, "50688888888")
 
     # El monto se corrige a -5000 (sigue siendo Gasto) y NO se pierden categoría/detalle
-    assert result == [-5000, "Alimentación", "almuerzo"]
+    assert result is not None
+    assert result["monto"] == -5000
+    assert result["categoria"] == "Alimentación"
+    assert result["detalle"] == "almuerzo"
     called_args = mock_worksheet.update.call_args[0]
-    assert called_args[1] == [[-5000, "Alimentación", "almuerzo", "50688888888"]]
+    fila = called_args[1][0]
+    assert fila[1] == 500000
+    assert fila[2] == "Alimentación"
+    assert fila[3] == "almuerzo"
+    assert fila[6] == "gasto"
 
 
 @pytest.mark.anyio
+@patch("services.sheets_service._sync_registrar_auditoria")
 @patch("services.sheets_service.get_sheets_client")
-async def test_update_last_transaction_correccion_monto_cero_conserva(mock_get_sheets_client):
+async def test_update_last_transaction_correccion_monto_cero_conserva(
+    mock_get_sheets_client, mock_auditoria
+):
     """
     Hallazgo 20/08/2026: una corrección cuyo delta trae monto=0 (la IA lo inventó en vez
     de null) debe CONSERVAR el monto anterior, no pisarlo con 0.
@@ -352,14 +445,17 @@ async def test_update_last_transaction_correccion_monto_cero_conserva(mock_get_s
     mock_client.open_by_key.return_value = mock_spreadsheet
     mock_spreadsheet.worksheet.return_value = mock_worksheet
 
-    mock_worksheet.col_values.return_value = ["teléfono", "50611111111", "50688888888"]
     # Fila previa: un gasto de transporte de 6000
-    mock_worksheet.row_values.return_value = [
-        "2026-08-20 18:00:00",
-        "-6000",
-        "Transporte",
-        "pasajes",
-        "50688888888",
+    mock_worksheet.get_all_values.return_value = [
+        TRANSACTION_HEADERS,
+        _fila_canonica(
+            "2026-08-20 18:00:00",
+            600000,
+            "Transporte",
+            "pasajes",
+            "50688888888",
+            movimiento_id="mov-1",
+        ),
     ]
 
     fake_transaction = {
@@ -372,12 +468,15 @@ async def test_update_last_transaction_correccion_monto_cero_conserva(mock_get_s
     result = await update_last_transaction_to_sheet(fake_transaction, "50688888888")
 
     # El monto anterior se conserva (-6000) y no se pisa con 0
-    assert result == [-6000, "Transporte", "pasajes"]
+    assert result is not None
+    assert result["monto"] == -6000
+    assert result["despues"]["monto_centimos"] == 600000
 
 
 @pytest.mark.anyio
+@patch("services.sheets_service._sync_registrar_auditoria")
 @patch("services.sheets_service.get_sheets_client")
-async def test_update_last_transaction_sin_previas(mock_get_sheets_client):
+async def test_update_last_transaction_sin_previas(mock_get_sheets_client, mock_auditoria):
     """Prueba que si el usuario no tiene transacciones previas, devuelve None sin actualizar."""
     mock_client = MagicMock()
     mock_spreadsheet = MagicMock()
@@ -387,8 +486,8 @@ async def test_update_last_transaction_sin_previas(mock_get_sheets_client):
     mock_client.open_by_key.return_value = mock_spreadsheet
     mock_spreadsheet.worksheet.return_value = mock_worksheet
 
-    # Solo encabezado y filas de otros usuarios
-    mock_worksheet.col_values.return_value = ["teléfono", "50611111111", "50622222222"]
+    # Solo encabezado canónico, sin movimientos
+    mock_worksheet.get_all_values.return_value = [TRANSACTION_HEADERS]
 
     fake_transaction = {
         "monto": 6000,
@@ -424,8 +523,8 @@ async def test_append_transaction_api_error(mock_get_sheets_client):
     # Ejecutar la función
     result = await append_transaction_to_sheet(fake_transaction, "50688888888")
 
-    # El servicio debe capturar el error y retornar False en lugar de tirar un crash
-    assert result is False
+    # El servicio debe capturar el error y retornar None en lugar de tirar un crash
+    assert result is None
 
 
 @pytest.mark.anyio

@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont
 
+from services.modelo_service import monto_con_signo
 from services.politica_service import _normalizar
 
 ZONA_CR = ZoneInfo("America/Costa_Rica")
@@ -194,14 +195,6 @@ def _parsear_fecha(valor: Any) -> datetime | None:
     return fecha_utc.astimezone(ZONA_CR)
 
 
-def _parsear_monto(valor: Any) -> int | None:
-    """Lee el monto de la hoja (número entero; negativo = gasto). None si no es número."""
-    try:
-        return int(float(str(valor).strip()))
-    except (TypeError, ValueError):
-        return None
-
-
 def _extraer_movimientos(filas: list[list[Any]]) -> list[tuple[datetime, int, str, str]]:
     """Filas de la pestaña → (fecha en hora CR, monto, categoría, detalle); ignora basura."""
     movimientos: list[tuple[datetime, int, str, str]] = []
@@ -209,8 +202,8 @@ def _extraer_movimientos(filas: list[list[Any]]) -> list[tuple[datetime, int, st
         if len(fila) < 2:
             continue
         fecha = _parsear_fecha(fila[0])
-        monto = _parsear_monto(fila[1])
-        if fecha is None or monto is None or monto == 0:
+        monto = monto_con_signo(fila)
+        if fecha is None or monto == 0:
             continue
         categoria = str(fila[2]).strip() if len(fila) > 2 and fila[2] else "Otros"
         detalle = str(fila[3]).strip() if len(fila) > 3 and fila[3] else categoria

@@ -199,10 +199,13 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
 - **Aislamiento por pestañas (6.5.2, ADR-0009)** — cada cliente registra SOLO en su pestaña
   (título = teléfono, creada perezosamente con encabezados). `_sync_get_client_worksheet()` se
   aplica en append/corregir/leer. Sheet1 queda como legado del dueño.
-- **Exportación y baja (6.5.3, ADR-0011)** — derechos ARCO: "exporta mis datos" envía el
-  historial de la pestaña del cliente por WhatsApp (`obtener_transacciones_cliente()` +
-  `_formatear_movimiento()`); "darme de baja" marca `cancelado` en `Consentimiento` SIN borrar
-  datos (la eliminación total la decide el fundador).
+- **Exportación y baja (6.5.3, ADR-0011; archivos desde 08/11/2026)** — derechos ARCO:
+  "exporta mis datos" genera CSV (UTF-8 con BOM) y XLSX con las columnas Fecha, Tipo, Monto,
+  Moneda, Categoría, Contexto y Detalle, y los envía como documentos de WhatsApp
+  (`services/export_service.py` + `enviar_documento_whatsapp()`); si Meta rechaza el archivo,
+  cae al texto de siempre. Incluye anulados/pendientes marcados en la columna Tipo.
+  "darme de baja" marca `cancelado` en `Consentimiento` SIN borrar datos (la eliminación total
+  la decide el fundador).
 - **Re-consentimiento por versión (6.5.6, ADR-0011)** — `politica_aceptada_vigente()`: el gate
   exige `estado == aceptado` **y** versión vigente (normaliza `'1.0'` vs `'1'` porque Sheets
   guarda el entero). Si la política cambia, el usuario recibe aviso + política nueva y debe
@@ -229,9 +232,9 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
   exacta, 3–6 substring, >6 nunca) para `"sí"`/`"es lo mismo"`. **E2E 05/10/2026: fix de
   consentimiento validado** (baja→`Hola`→`no quiero aceptar`→política sin consentimiento→
   `ACEPTO`→gasto OK) → **NO-GO levantado, 8A lanzado (escalonado)**.
-- **QA en esa etapa: pytest 156/156** en Docker (ruff/black/mypy verdes, gitleaks `no leaks found`). (Vigente al 08/11/2026: **428/428**.)
+- **QA en esa etapa: pytest 156/156** en Docker (ruff/black/mypy verdes, gitleaks `no leaks found`). (Cifra histórica del original; el BORRADOR actual suma los tests de P1-3/P1-4.)
 
-### Novedades 01–08/11/2026 — onboarding, cambio de número y paso 4 del Sprint
+### Novedades 01–08/11/2026 — onboarding, cambio de número, paso 4 y P1-3/P1-4
 
 - **Integridad P0 (01/11/2026):** la confirmación de guardado y el dedupe dependen del
   resultado real de Sheets (si falla, no se confirma ni se marca dedupe) y la suite dejó
@@ -255,10 +258,20 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
     ("borrá el presupuesto de alimentación").
   - **Aislamiento de tests:** fixture autouse que bloquea el Google Sheet real (un test
     había escrito en producción; la fila se borró).
-- **QA:** **428/428** tests en BORRADOR y original, con y sin pytest-asyncio; ruff/black/mypy
-  verdes. **Deploy:** los commits del periodo (P0, #16, #17, paso 4 y fixes) están
-  desplegados en el VPS y verificados (`/health` 200, logs limpios); **push a GitHub/GitLab
-  realizado al cierre del 08/11/2026**.
+- **P1-3/P1-4 + modelo canónico mínimo (08/11/2026, BORRADOR y original):**
+  - Pestaña canónica de 13 columnas con migración perezosa conciliada (conteos y totales) y
+    pestaña `Auditoria` con antes/después (`services/modelo_service.py`).
+  - Borrado lógico con confirmación explícita (D24), deshacer de un solo paso con ventana de
+    siguiente mensaje/10 min (D23), historial por usuario y reactivación; corregir/borrar/
+    deshacer funcionan con plan vencido (D25) (`services/a08_service.py` + pipeline).
+  - Export CSV (UTF-8 con BOM) y XLSX de 7 columnas, enviados como documentos de WhatsApp con
+    fallback a texto; `openpyxl==3.1.5` agregado a `requirements.txt`.
+  - Suite al cierre: **498/498** en BORRADOR y en el original (host y Docker), ruff/black/mypy
+    verdes. Falta desplegar al VPS.
+- **QA (al cierre del paso 4):** **428/428** en BORRADOR y original, con y sin pytest-asyncio;
+  ruff/black/mypy verdes. **Deploy:** los commits del periodo (P0, #16, #17, paso 4 y fixes)
+  están desplegados en el VPS y verificados (`/health` 200, logs limpios); **push a GitHub/
+  GitLab realizado al cierre del 08/11/2026**.
 
 ---
 
@@ -395,9 +408,10 @@ Celery Worker (workers/tasks.py)
   horario silencioso) implementado, desplegado y validado E2E; bugs de voz/precisión
   corregidos. **Push realizado** (`develop` → GitHub + GitLab, 08/11/2026).
 - **Estado comercial (08/11/2026):** Gate 0 técnico cerrado; **NO listo para cobrar** —
-  faltan P1-3 (borrado/deshacer), P1-4 (export CSV/XLSX), modelo canónico mínimo, operación
-  (restore/monitoreo/runbooks), 8B + test de precio y seguridad #10. Estimación honesta:
-  no antes de febrero–marzo 2027.
+  P1-3 (borrado/deshacer/historial), P1-4 (export CSV/XLSX) y modelo canónico mínimo ya están
+  implementados y probados en BORRADOR y migrados al original; faltan operación (restore/
+  monitoreo/runbooks), 8B + test de precio, seguridad #10 y desplegar al VPS. Estimación
+  honesta: no antes de febrero–marzo 2027.
 
 ### Timeline
 
@@ -448,9 +462,10 @@ Celery Worker (workers/tasks.py)
 - **Autenticación Simplificada (6.3):** 🔄 Parcial — identidad por WhatsApp + consentimiento
   (D2); sin flujo dedicado adicional.
 - **Antes de cobrar (G3, veredicto 08/11/2026):** P1-3 borrado/deshacer, P1-4 export
-  CSV/XLSX, modelo canónico mínimo, operación (restore probado, monitoreo, runbooks,
-  soporte, métricas), 8B + test de precio, rotación de `WHATSAPP_VERIFY_TOKEN` (#10) y
-  límites por teléfono/plan.
+  CSV/XLSX y modelo canónico mínimo **implementados, probados y migrados al original
+  (08/11/2026)**; faltan operación (restore probado, monitoreo, runbooks, soporte, métricas),
+  8B + test de precio, rotación de `WHATSAPP_VERIFY_TOKEN` (#10), límites por teléfono/plan y
+  desplegar al VPS.
 
 ---
 
@@ -606,9 +621,9 @@ curl https://cajachicacr.com/health
 |---|---|---|
 | Black | `black . --check` | Formateo consistente |
 | Ruff | `ruff check .` | 0 errores |
-| Mypy | `mypy app/ workers/ services/` (config, sin `--strict`, como la CI) | 0 errores en 25 archivos |
+| Mypy | `mypy app/ workers/ services/` (config, sin `--strict`, como la CI) | 0 errores en 28 archivos |
 | Mypy estricto | `mypy --strict` | **Success: no issues found in 18 source files (02/10/2026)** |
-| Pytest | `pytest tests/ -v` | **428/428 passed (08/11/2026, con y sin pytest-asyncio)** |
+| Pytest | `pytest tests/ -v` | **498/498 passed (BORRADOR y original, 08/11/2026; host y Docker)** |
 
 ```bash
 # QA local (Docker)

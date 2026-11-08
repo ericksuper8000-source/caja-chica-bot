@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
+from services.modelo_service import monto_con_signo
 from services.sheets_service import obtener_transacciones_cliente
 
 logger = logging.getLogger(__name__)
@@ -380,10 +381,7 @@ async def calcular_consulta_categoria(
             continue
         if not _coincide_categoria(row[2], consulta.categoria):
             continue
-        try:
-            monto = int(row[1])
-        except (ValueError, TypeError):
-            continue
+        monto = monto_con_signo(row)
         if monto < 0:
             total += abs(monto)
             count += 1
@@ -426,10 +424,7 @@ async def calcular_consulta_mayor(
     for row in filas:
         if len(row) < 4:
             continue
-        try:
-            monto = int(row[1])
-        except (ValueError, TypeError):
-            continue
+        monto = monto_con_signo(row)
         if monto >= 0:
             continue
         monto_abs = abs(monto)
@@ -489,10 +484,7 @@ async def calcular_consulta_comparacion(
         dt = _parse_fecha(row[0])
         if not dt:
             continue
-        try:
-            monto = int(row[1])
-        except (ValueError, TypeError):
-            continue
+        monto = monto_con_signo(row)
 
         if inicio_anterior <= dt < fin_anterior + (fin_anterior - inicio_anterior):
             if monto < 0:
@@ -543,10 +535,7 @@ async def calcular_consulta_presupuesto_restante(
             continue
         if not _coincide_categoria(row[2], consulta.categoria):
             continue
-        try:
-            monto = int(row[1])
-        except (ValueError, TypeError):
-            continue
+        monto = monto_con_signo(row)
         if monto < 0:
             gastado += abs(monto)
 
