@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from services.consulta_service import _parse_fecha
 from services.sheets_service import (
     eliminar_presupuesto_sheet,
     guardar_presupuesto_sheet,
@@ -92,11 +93,8 @@ def calcular_gastado_mes(
     for row in filas:
         if len(row) < 3:
             continue
-        try:
-            dt = datetime.fromisoformat(str(row[0]).replace("/", "-"))
-        except ValueError:
-            continue
-        if dt < inicio_mes:
+        dt = _parse_fecha(str(row[0]))
+        if dt is None or dt < inicio_mes:
             continue
         categoria_hoja = _normalizar_categoria(str(row[2]))
         if not (

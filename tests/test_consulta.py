@@ -17,6 +17,7 @@ from services.consulta_service import (
     calcular_consulta_categoria,
     calcular_consulta_comparacion,
     calcular_consulta_mayor,
+    calcular_consulta_presupuesto_restante,
     detectar_consulta,
     formatear_resultado_categoria,
     formatear_resultado_comparacion,
@@ -298,3 +299,31 @@ class TestConsultaPipeline:
 
     def test_limpiar_texto_quita_tildes(self) -> None:
         assert _limpiar_texto("¿Cuánto me queda?") == "cuanto me queda"
+
+    @pytest.mark.anyio
+    async def test_presupuesto_restante_tolera_hora_corta_de_sheets(self) -> None:
+        """Caso real 07/11: Sheets devuelve '0:52:35' (un dígito) en algunas filas."""
+        rows = [
+            ["2026-11-02 0:52:35", "-8000", "alimentacion", "madrugada", "506"],
+            ["2026-11-07 10:00:00", "-1000", "alimentacion", "dia", "506"],
+        ]
+        with (
+            _reloj_fijo(2026, 11, 7),
+            patch(
+                "services.consulta_service.obtener_transacciones_cliente",
+                new_callable=AsyncMock,
+            ) as mock_rows,
+            patch(
+                "services.presupuesto_service.obtener_presupuesto_categoria",
+                new_callable=AsyncMock,
+            ) as mock_presupuesto,
+        ):
+            mock_rows.return_value = rows
+            mock_presupuesto.return_value = 10000
+            resultado = await calcular_consulta_presupuesto_restante(
+                "506", ConsultaPresupuestoRestante(categoria="alimentacion")
+            )
+
+        assert resultado is not None
+        assert resultado.gastado == 9000
+        assert resultado.restante == 1000

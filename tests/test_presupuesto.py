@@ -157,9 +157,10 @@ def test_calcular_gastado_mes_suma_solo_gastos_del_mes() -> None:
         ["2026-11-10 10:00:00", "2000", "Transporte", "ingreso", "t"],
         ["2026-10-31 10:00:00", "-999", "Transporte", "mes anterior", "t"],
         ["2026-11-05 10:00:00", "-700", "Alimentación", "comida", "t"],
+        ["2026-11-02 0:52:35", "-5000", "Transporte", "hora corta de Sheets", "t"],
     ]
 
-    assert calcular_gastado_mes(filas, "Transporte", ahora) == 1500
+    assert calcular_gastado_mes(filas, "Transporte", ahora) == 6500
 
 
 @pytest.mark.anyio

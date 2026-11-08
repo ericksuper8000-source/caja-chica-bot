@@ -538,11 +538,8 @@ async def calcular_consulta_presupuesto_restante(
     for row in rows:
         if len(row) < 3:
             continue
-        try:
-            dt = datetime.fromisoformat(row[0].replace("/", "-"))
-        except ValueError:
-            continue
-        if dt < inicio_mes:
+        dt = _parse_fecha(str(row[0]))
+        if dt is None or dt < inicio_mes:
             continue
         if not _coincide_categoria(row[2], consulta.categoria):
             continue
