@@ -683,3 +683,307 @@ async def renombrar_pestana_cliente(telefono_anterior: str, telefono_nuevo: str)
     except Exception as e:
         logger.error(f"Error inesperado al renombrar pestaña: {e}")
         return False
+
+
+# ==========================================
+# PASO 4 SPRINT — Presupuestos durables (D26: pestaña `Presupuestos`)
+# ==========================================
+PRESUPUESTOS_TAB_NAME = "Presupuestos"
+PRESUPUESTOS_HEADERS = [
+    "telefono",
+    "categoria",
+    "limite",
+    "periodo",
+    "alerta_80",
+    "alerta_100",
+    "actualizado",
+]
+
+
+def _sync_get_presupuestos_worksheet(spreadsheet_id: str) -> Any:
+    """Devuelve la pestaña de presupuestos, creándola con encabezados si no existe."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    try:
+        worksheet = spreadsheet.worksheet(PRESUPUESTOS_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(
+            title=PRESUPUESTOS_TAB_NAME, rows=200, cols=len(PRESUPUESTOS_HEADERS)
+        )
+        worksheet.append_row(
+            PRESUPUESTOS_HEADERS,
+            value_input_option=ValueInputOption.user_entered,
+        )
+    return worksheet
+
+
+def _fila_presupuesto(row: list[str]) -> dict[str, str]:
+    """Convierte una fila de la pestaña en dict tolerante a columnas faltantes."""
+    return {
+        "telefono": row[0] if len(row) > 0 else "",
+        "categoria": row[1] if len(row) > 1 else "",
+        "limite": row[2] if len(row) > 2 else "",
+        "periodo": row[3] if len(row) > 3 else "",
+        "alerta_80": row[4] if len(row) > 4 else "",
+        "alerta_100": row[5] if len(row) > 5 else "",
+    }
+
+
+def _normalizar_categoria_sheet(valor: str) -> str:
+    """Normaliza categorías para comparar (minúsculas y sin tildes)."""
+    texto = str(valor).strip().lower()
+    for origen, destino in (
+        ("á", "a"),
+        ("é", "e"),
+        ("í", "i"),
+        ("ó", "o"),
+        ("ú", "u"),
+        ("ü", "u"),
+    ):
+        texto = texto.replace(origen, destino)
+    return texto
+
+
+def _sync_leer_presupuestos(spreadsheet_id: str) -> list[dict[str, str]]:
+    """Lee todas las filas de presupuestos (sin el encabezado)."""
+    worksheet = _sync_get_presupuestos_worksheet(spreadsheet_id)
+    filas = worksheet.get_all_values()
+    return [_fila_presupuesto(row) for row in filas[1:] if row and str(row[0]).strip()]
+
+
+def _sync_guardar_presupuesto(
+    spreadsheet_id: str, telefono: str, categoria: str, limite: int
+) -> bool:
+    """
+    Inserta o actualiza el presupuesto de un teléfono/categoría (una sola fuente:
+    la pestaña `Presupuestos`, D26). El periodo V1 es mensual.
+    """
+    worksheet = _sync_get_presupuestos_worksheet(spreadsheet_id)
+    filas = worksheet.get_all_values()
+    ahora = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    for numero, row in enumerate(filas[1:], start=2):
+        if not row:
+            continue
+        if str(row[0]).strip() == telefono and _normalizar_categoria_sheet(
+            row[1]
+        ) == _normalizar_categoria_sheet(categoria):
+            worksheet.update_cell(numero, 3, limite)
+            worksheet.update_cell(numero, 7, ahora)
+            return True
+    worksheet.append_row(
+        [telefono, categoria, limite, "mensual", "", "", ahora],
+        value_input_option=ValueInputOption.user_entered,
+    )
+    return True
+
+
+def _sync_eliminar_presupuesto(spreadsheet_id: str, telefono: str, categoria: str) -> bool:
+    """Borra la fila del presupuesto si existe. Retorna True si la encontró."""
+    worksheet = _sync_get_presupuestos_worksheet(spreadsheet_id)
+    filas = worksheet.get_all_values()
+    for numero, row in enumerate(filas[1:], start=2):
+        if not row:
+            continue
+        if str(row[0]).strip() == telefono and _normalizar_categoria_sheet(
+            row[1]
+        ) == _normalizar_categoria_sheet(categoria):
+            worksheet.delete_rows(numero)
+            return True
+    return False
+
+
+def _sync_marcar_alerta_presupuesto(
+    spreadsheet_id: str, telefono: str, categoria: str, umbral: int, periodo: str
+) -> bool:
+    """Marca la alerta (80/100) del periodo para no repetirla. True si marcó."""
+    worksheet = _sync_get_presupuestos_worksheet(spreadsheet_id)
+    filas = worksheet.get_all_values()
+    columna = 5 if umbral == 80 else 6
+    for numero, row in enumerate(filas[1:], start=2):
+        if not row:
+            continue
+        if str(row[0]).strip() == telefono and _normalizar_categoria_sheet(
+            row[1]
+        ) == _normalizar_categoria_sheet(categoria):
+            worksheet.update_cell(numero, columna, periodo)
+            return True
+    return False
+
+
+async def obtener_presupuestos_sheet() -> list[dict[str, str]]:
+    """Lista de presupuestos persistidos en la pestaña `Presupuestos`."""
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(_sync_leer_presupuestos, spreadsheet_id)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al leer presupuestos: {error}")
+        return []
+    except Exception as e:
+        logger.error(f"Error inesperado al leer presupuestos: {e}")
+        return []
+
+
+async def guardar_presupuesto_sheet(telefono: str, categoria: str, limite: int) -> bool:
+    """Persiste el presupuesto en la pestaña `Presupuestos` (D26)."""
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_guardar_presupuesto, spreadsheet_id, telefono, categoria, limite
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al guardar presupuesto: {error}")
+        return False
+    except Exception as e:
+        logger.error(f"Error inesperado al guardar presupuesto: {e}")
+        return False
+
+
+async def eliminar_presupuesto_sheet(telefono: str, categoria: str) -> bool:
+    """Elimina el presupuesto de la pestaña `Presupuestos`."""
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_eliminar_presupuesto, spreadsheet_id, telefono, categoria
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al eliminar presupuesto: {error}")
+        return False
+    except Exception as e:
+        logger.error(f"Error inesperado al eliminar presupuesto: {e}")
+        return False
+
+
+async def marcar_alerta_presupuesto_sheet(
+    telefono: str, categoria: str, umbral: int, periodo: str
+) -> bool:
+    """Marca en la pestaña que la alerta del umbral ya se envió en el periodo."""
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_marcar_alerta_presupuesto,
+            spreadsheet_id,
+            telefono,
+            categoria,
+            umbral,
+            periodo,
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al marcar alerta: {error}")
+        return False
+    except Exception as e:
+        logger.error(f"Error inesperado al marcar alerta: {e}")
+        return False
+
+
+# ==========================================
+# PASO 4 SPRINT — Preferencias del cliente (STOP/activar automáticos)
+# ==========================================
+PREFERENCIAS_TAB_NAME = "Preferencias"
+PREFERENCIAS_HEADERS = ["telefono", "resumen_semanal", "actualizado"]
+
+
+def _sync_get_preferencias_worksheet(spreadsheet_id: str) -> Any:
+    """Devuelve la pestaña de preferencias, creándola con encabezados si no existe."""
+    client = get_sheets_client()
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    try:
+        worksheet = spreadsheet.worksheet(PREFERENCIAS_TAB_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(
+            title=PREFERENCIAS_TAB_NAME, rows=200, cols=len(PREFERENCIAS_HEADERS)
+        )
+        worksheet.append_row(
+            PREFERENCIAS_HEADERS,
+            value_input_option=ValueInputOption.user_entered,
+        )
+    return worksheet
+
+
+def _sync_leer_preferencia_resumen(spreadsheet_id: str, telefono: str) -> str | None:
+    """Lee la preferencia de resumen semanal ('si'/'no') o None si no hay fila."""
+    worksheet = _sync_get_preferencias_worksheet(spreadsheet_id)
+    phones = worksheet.col_values(1)
+    matches = [i for i, phone in enumerate(phones, start=1) if phone == telefono]
+    if not matches:
+        return None
+    values = worksheet.row_values(matches[-1])
+    if len(values) < 2 or not values[1]:
+        return None
+    return str(values[1]).strip().lower()
+
+
+def _sync_guardar_preferencia_resumen(spreadsheet_id: str, telefono: str, habilitado: bool) -> bool:
+    """Inserta o actualiza la preferencia de resumen semanal del teléfono."""
+    worksheet = _sync_get_preferencias_worksheet(spreadsheet_id)
+    phones = worksheet.col_values(1)
+    matches = [i for i, phone in enumerate(phones, start=1) if phone == telefono]
+    ahora = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    valor = "si" if habilitado else "no"
+    if matches:
+        worksheet.update_cell(matches[-1], 2, valor)
+        worksheet.update_cell(matches[-1], 3, ahora)
+        return True
+    worksheet.append_row(
+        [telefono, valor, ahora],
+        value_input_option=ValueInputOption.user_entered,
+    )
+    return True
+
+
+async def leer_preferencia_resumen(telefono: str) -> bool:
+    """True si el teléfono recibe el resumen semanal (default: sí, opt-out)."""
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        valor = await asyncio.to_thread(_sync_leer_preferencia_resumen, spreadsheet_id, telefono)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al leer preferencias: {error}")
+        return True
+    except Exception as e:
+        logger.error(f"Error inesperado al leer preferencias: {e}")
+        return True
+    return valor != "no"
+
+
+async def guardar_preferencia_resumen(telefono: str, habilitado: bool) -> bool:
+    """Guarda STOP/activar del resumen semanal en `Preferencias`."""
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(
+            _sync_guardar_preferencia_resumen, spreadsheet_id, telefono, habilitado
+        )
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al guardar preferencias: {error}")
+        return False
+    except Exception as e:
+        logger.error(f"Error inesperado al guardar preferencias: {e}")
+        return False
+
+
+def _sync_leer_telefonos_con_acceso(spreadsheet_id: str) -> list[str]:
+    """
+    Lista los teléfonos con acceso comercial (última fila de `Suscripciones` en un
+    estado con acceso). Se usa para el resumen semanal automático.
+    """
+    worksheet = _sync_get_suscripciones_worksheet(spreadsheet_id)
+    filas = worksheet.get_all_values()
+    ultimo_estado: dict[str, str] = {}
+    for row in filas[1:]:
+        if not row:
+            continue
+        telefono = str(row[0]).strip()
+        if telefono:
+            ultimo_estado[telefono] = str(row[2]).strip().lower() if len(row) > 2 else ""
+    return [telefono for telefono, estado in ultimo_estado.items() if estado in ESTADOS_CON_ACCESO]
+
+
+async def obtener_telefonos_con_acceso() -> list[str]:
+    """Teléfonos con suscripción vigente (para notificaciones automáticas)."""
+    spreadsheet_id = settings.GOOGLE_SHEETS_SPREADSHEET_ID
+    try:
+        return await asyncio.to_thread(_sync_leer_telefonos_con_acceso, spreadsheet_id)
+    except gspread.exceptions.APIError as error:
+        logger.error(f"Error de API de gspread al listar teléfonos: {error}")
+        return []
+    except Exception as e:
+        logger.error(f"Error inesperado al listar teléfonos: {e}")
+        return []

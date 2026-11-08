@@ -7,14 +7,17 @@ from services.consulta_service import (
     ConsultaCategoria,
     ConsultaComparacion,
     ConsultaMayor,
+    ConsultaPresupuestoRestante,
     ResultadoCategoria,
     ResultadoComparacion,
     ResultadoMayor,
     _filtrar_por_periodo,
+    _limpiar_texto,
     _parse_fecha,
     calcular_consulta_categoria,
     calcular_consulta_comparacion,
     calcular_consulta_mayor,
+    calcular_consulta_presupuesto_restante,
     detectar_consulta,
     formatear_resultado_categoria,
     formatear_resultado_comparacion,
@@ -282,3 +285,45 @@ class TestConsultaPipeline:
             assert res is not None
             assert res.actual_total == 8000
             assert res.anterior_total == 12000
+
+    @pytest.mark.anyio
+    async def test_deteccion_presupuesto_restante_con_tildes(self) -> None:
+        """Caso real 07/11: Whisper transcribe 'Cuánto me queda...' con tilde."""
+        with patch(
+            "services.consulta_service._categorias_reales",
+            new_callable=AsyncMock,
+        ) as mock_cats:
+            mock_cats.return_value = {"transporte", "alimentacion"}
+            consulta = await detectar_consulta("50660646370", "¿Cuánto me queda en transporte?")
+        assert consulta == ConsultaPresupuestoRestante(categoria="transporte")
+
+    def test_limpiar_texto_quita_tildes(self) -> None:
+        assert _limpiar_texto("¿Cuánto me queda?") == "cuanto me queda"
+
+    @pytest.mark.anyio
+    async def test_presupuesto_restante_tolera_hora_corta_de_sheets(self) -> None:
+        """Caso real 07/11: Sheets devuelve '0:52:35' (un dígito) en algunas filas."""
+        rows = [
+            ["2026-11-02 0:52:35", "-8000", "alimentacion", "madrugada", "506"],
+            ["2026-11-07 10:00:00", "-1000", "alimentacion", "dia", "506"],
+        ]
+        with (
+            _reloj_fijo(2026, 11, 7),
+            patch(
+                "services.consulta_service.obtener_transacciones_cliente",
+                new_callable=AsyncMock,
+            ) as mock_rows,
+            patch(
+                "services.presupuesto_service.obtener_presupuesto_categoria",
+                new_callable=AsyncMock,
+            ) as mock_presupuesto,
+        ):
+            mock_rows.return_value = rows
+            mock_presupuesto.return_value = 10000
+            resultado = await calcular_consulta_presupuesto_restante(
+                "506", ConsultaPresupuestoRestante(categoria="alimentacion")
+            )
+
+        assert resultado is not None
+        assert resultado.gastado == 9000
+        assert resultado.restante == 1000

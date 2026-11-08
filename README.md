@@ -1,6 +1,6 @@
 # El Analista Financiero de Caja Chica vía WhatsApp
 
-**Inicio:** 10/07/2026 · **Última actualización:** 05/10/2026  
+**Inicio:** 10/07/2026 · **Última actualización:** 08/11/2026  
 **Tipo:** Bot privado de automatización, captura y control financiero para micro-PYMEs en Costa Rica.
 
 Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados por WhatsApp. Traduce modismos ticos ("rojos", "tucanes", "tejas") a datos contables exactos usando IA, y persiste la información en Google Sheets.
@@ -229,7 +229,36 @@ Registra ingresos y gastos mediante notas de voz y mensajes de texto enviados po
   exacta, 3–6 substring, >6 nunca) para `"sí"`/`"es lo mismo"`. **E2E 05/10/2026: fix de
   consentimiento validado** (baja→`Hola`→`no quiero aceptar`→política sin consentimiento→
   `ACEPTO`→gasto OK) → **NO-GO levantado, 8A lanzado (escalonado)**.
-- **QA actual: pytest 156/156** en Docker (ruff/black/mypy verdes, gitleaks `no leaks found`).
+- **QA en esa etapa: pytest 156/156** en Docker (ruff/black/mypy verdes, gitleaks `no leaks found`). (Vigente al 08/11/2026: **428/428**.)
+
+### Novedades 01–08/11/2026 — onboarding, cambio de número y paso 4 del Sprint
+
+- **Integridad P0 (01/11/2026):** la confirmación de guardado y el dedupe dependen del
+  resultado real de Sheets (si falla, no se confirma ni se marca dedupe) y la suite dejó
+  de depender de fechas reales.
+- **Onboarding 6.1 (01/11/2026):** alta guiada por WhatsApp (tipo de uso, espacio,
+  contexto, categorías, primer movimiento + resumen), pestaña `Usuarios` y cambio de
+  número con código de 6 dígitos (Redis, 10 min).
+- **Deuda QA #16 (07/11/2026):** 48 tests async migrados a `@pytest.mark.anyio` para que la
+  suite pase en la imagen de producción (sin pytest-asyncio).
+- **Cambio de número 5.6 / deuda #17 (07/11/2026):** el cambio ahora migra la fila de
+  `Suscripciones` (o la reactiva si estaba cancelada), revoca el número viejo y aborta con
+  aviso si el número nuevo ya tiene historial. Validado E2E en producción (A→B).
+- **Paso 4 del Sprint de Valor Visible (07–08/11/2026):**
+  - Presupuestos **durables** en la pestaña `Presupuestos` (D26) + **alerta automática al
+    80% y 100%**, una vez por umbral y periodo (marcas en la fila).
+  - **STOP/activar** mensajes automáticos en la pestaña `Preferencias` (opt-out).
+  - **Resumen semanal automático** por Celery beat (lunes 08:00 CR, configurable) y
+    **horario silencioso** 22:00–07:00 CR.
+  - Endurecimiento por voz: montos con `$`, `₡`, palabras ("veinte mil"), tildes en
+    consultas/marcas, hora de un dígito de Sheets y borrado de presupuestos tolerante
+    ("borrá el presupuesto de alimentación").
+  - **Aislamiento de tests:** fixture autouse que bloquea el Google Sheet real (un test
+    había escrito en producción; la fila se borró).
+- **QA:** **428/428** tests en BORRADOR y original, con y sin pytest-asyncio; ruff/black/mypy
+  verdes. **Deploy:** los commits del periodo (P0, #16, #17, paso 4 y fixes) están
+  desplegados en el VPS y verificados (`/health` 200, logs limpios); **push a GitHub/GitLab
+  realizado al cierre del 08/11/2026**.
 
 ---
 
@@ -292,7 +321,7 @@ Celery Worker (workers/tasks.py)
 
 ## Estado del Proyecto
 
-- **156 tests, 156 passed (02/10/2026, QA canónico en Docker)** · black y ruff 0 errores · mypy (config, sin `--strict`, como en CI) en verde · `mypy --strict` en verde (18 archivos) · gitleaks `no leaks found`
+- **428 tests, 428 passed (08/11/2026, BORRADOR y original, con y sin pytest-asyncio)** · black y ruff 0 errores · mypy en verde (25 archivos) · gitleaks `no leaks found` · CI GitHub Actions + GitLab CI (pipelines idénticos)
 - CI/CD: GitHub Actions + GitLab CI (pipelines idénticos)
 - **03/08/2026:** Descarga de audio de Meta corregida (Bearer Token) y validada con `200 OK` contra servidores reales.
 - **05/08/2026:** App Secret real aplicado, firma HMAC-SHA256 validada matemáticamente, suscripción WABA→App exitosa y **pipeline de IA demostrado de punta a punta sin Meta** (webhook simulado → Whisper → GPT-4o-mini → Google Sheets).
@@ -356,6 +385,19 @@ Celery Worker (workers/tasks.py)
 - **02/10/2026:** **2 fixes de conversación en producción (`main` @ `fbff8e8`), suite 156/156.**
 - **05/10/2026:** **E2E de consentimiento VALIDADO → NO-GO LEVANTADO → 8A LANZADO
   (escalonado: Jacqueline 06/10 · Triana ~20/10 · Danny pendiente).**
+- **18/10/2026:** **8A COMPLETADO (3/3, 0 fallos)**; **7.2.1 Gate comercial** desplegado
+  (`main` `c0db283`, E2E 6/6) y **Sprint de Valor Visible pasos 1–3** en producción
+  (reportes, consultas 6.6, presupuestos 7.6).
+- **01/11/2026:** P0-1/P0-2 (confirmación real + suite estable) y **onboarding 6.1**
+  completos, migrados y desplegados; `feature11` integrada por el dueño.
+- **07–08/11/2026:** **fix #17 del cambio de número** validado E2E en producción; **paso 4
+  del sprint** (presupuestos durables + alertas 80/100, STOP/preferencias, resumen semanal,
+  horario silencioso) implementado, desplegado y validado E2E; bugs de voz/precisión
+  corregidos. **Push realizado** (`develop` → GitHub + GitLab, 08/11/2026).
+- **Estado comercial (08/11/2026):** Gate 0 técnico cerrado; **NO listo para cobrar** —
+  faltan P1-3 (borrado/deshacer), P1-4 (export CSV/XLSX), modelo canónico mínimo, operación
+  (restore/monitoreo/runbooks), 8B + test de precio y seguridad #10. Estimación honesta:
+  no antes de febrero–marzo 2027.
 
 ### Timeline
 
@@ -377,6 +419,8 @@ Celery Worker (workers/tasks.py)
 | 14 (Sep 28–29) | **Usuario 0: 19/19 (18 BIEN, 1 MAL — DUENO-16).** "Presupuesto transporte 50000" creó fila falsa → NO-GO → fix 8.6.3 (P1: `no_transaccion` + trampa J). | ✅ (fix diseñado) |
 | 15 (Oct 01–02) | **8.6.3 + 8.6.2 + 2 fixes de conversación en producción (`main` @ `fbff8e8`).** Hallazgo volumen `app_code` stale resuelto. **Suite 156/156**, gitleaks limpio. | ✅ |
 | 16 (Oct 05) | **E2E de consentimiento validado → NO-GO levantado → 8A lanzado (escalonado: Jacqueline 06/10).** | 🔄 (8A en curso) |
+| 17 (Oct 18) | **7.2.1 Gate comercial desplegado (`main` `c0db283`, E2E 6/6) + Sprint pasos 1–3 en producción + 8A COMPLETADO (3/3, 0 fallos)** | ✅ |
+| 18 (Nov 01–08) | **Onboarding 6.1 + cambio de número (fix #17) + paso 4 del sprint** (presupuestos durables, alertas 80/100, STOP, resumen semanal, horario silencioso): migrados, desplegados, **428/428**, **E2E del paso 4 validado en producción** y **push a GitHub+GitLab** | ✅ |
 
 ### Pendientes para MVP Comercial
 
@@ -391,9 +435,22 @@ Celery Worker (workers/tasks.py)
 - **Re-consentimiento por versión (6.5.6):** ✅ **COMPLETADO y desplegado 20/08/2026**.
 - **Backups del sheet (6.5.5):** ✅ **COMPLETADO y desplegado 20/08/2026** — ADR-0014, Celery beat, volumen `backups_data`.
 - **Despliegue Hetzner + Caddy (5.1):** ✅ **DESPLEGADO 07/09/2026** — CX23, HTTPS funcional en `cajachicacr.com`, webhook Meta verificado (07/09), `.env.production` sincronizado (08/09).
-- **Piloto fase 1 (familia):** 🔄 **8A LANZADO 05/10/2026 (escalonado: Jacqueline desde 06/10 · Triana ~20/10 en vivo · Danny pendiente).**
-- **Onboarding Automatizado (6.1):** ⬜ Pendiente (se construye después del pilotaje).
-- **Autenticación Simplificada (6.3):** ⬜ Pendiente.
+- **Piloto fase 1 (familia):** ✅ **8A COMPLETADO el 18/10/2026 (3/3, 0 fallos)**; 8B
+  pendiente (2 clientes reales, 1 mes + test de precio).
+- **Onboarding Automatizado (6.1):** ✅ **COMPLETADO, migrado y desplegado el 01/11/2026**
+  (alta guiada + pestaña `Usuarios` + cambio de número).
+- **Cambio de número (5.6 / deuda #17):** ✅ **COMPLETADO y validado E2E el 07/11/2026**
+  (migración de suscripción, revocación del número viejo y conflicto con historial).
+- **Paso 4 del Sprint (P1-1 + notificaciones):** ✅ **COMPLETADO, desplegado y E2E validado
+  el 08/11/2026** (presupuestos durables, alertas 80/100, STOP/preferencias, resumen semanal
+  y horario silencioso).
+- **Push:** ✅ **realizado el 08/11/2026** (`develop` → GitHub + GitLab).
+- **Autenticación Simplificada (6.3):** 🔄 Parcial — identidad por WhatsApp + consentimiento
+  (D2); sin flujo dedicado adicional.
+- **Antes de cobrar (G3, veredicto 08/11/2026):** P1-3 borrado/deshacer, P1-4 export
+  CSV/XLSX, modelo canónico mínimo, operación (restore probado, monitoreo, runbooks,
+  soporte, métricas), 8B + test de precio, rotación de `WHATSAPP_VERIFY_TOKEN` (#10) y
+  límites por teléfono/plan.
 
 ---
 
@@ -471,6 +528,16 @@ curl https://cajachicacr.com/health
 4. Recibís una confirmación por WhatsApp con los datos extraídos.
 5. Si no entiende el mensaje, recibís un mensaje de cortesía pidiendo reintentar.
 6. Podés pedir **"exporta mis datos"** o **"darme de baja"** en cualquier momento (ARCO).
+7. Consultá **"cuánto me queda en transporte"**, **"resumen de la semana"**,
+   **"reporte del mes"**, **"mayor gasto"** o comparaciones ("¿cómo voy este mes?").
+8. Fijá presupuestos con **"presupuesto transporte 20000"** (también por audio:
+   "presupuesto de transporte veinte mil"); el bot avisa al **80% y 100%** una vez por
+   periodo.
+9. Borrá un presupuesto con **"borrar presupuesto de transporte"** (o "borrá/eliminá/
+   quitar/sacar…").
+10. Pausá o reactivá los automáticos con **"stop"** / **"activar mensajes"**.
+11. Cambiá de número con **"cambiar mi número"** desde el número actual y confirmá desde el
+    número nuevo con el código de 6 dígitos.
 
 ### Modismos Soportados
 | Término | Significado |
@@ -539,9 +606,9 @@ curl https://cajachicacr.com/health
 |---|---|---|
 | Black | `black . --check` | Formateo consistente |
 | Ruff | `ruff check .` | 0 errores |
-| Mypy | `mypy app/ workers/ services/` (config, sin `--strict`, como la CI) | 0 errores en 18 archivos |
+| Mypy | `mypy app/ workers/ services/` (config, sin `--strict`, como la CI) | 0 errores en 25 archivos |
 | Mypy estricto | `mypy --strict` | **Success: no issues found in 18 source files (02/10/2026)** |
-| Pytest | `pytest tests/ -v` | **156/156 passed (02/10/2026)** |
+| Pytest | `pytest tests/ -v` | **428/428 passed (08/11/2026, con y sin pytest-asyncio)** |
 
 ```bash
 # QA local (Docker)

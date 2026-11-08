@@ -34,6 +34,16 @@ celery_app.conf.beat_schedule = {
             hour=settings.BACKUP_CRON_HOUR,
         ),
     },
+    # Paso 4 Sprint — resumen semanal automático (hora de Costa Rica; el guard de
+    # horario silencioso vive dentro de la tarea como red de seguridad).
+    "resumen-semanal-automatico": {
+        "task": "workers.tasks.enviar_resumenes_semanales_task",
+        "schedule": crontab(
+            day_of_week=settings.RESUMEN_SEMANAL_CRON_DAY_OF_WEEK,
+            hour=settings.RESUMEN_SEMANAL_CRON_HOUR,
+            minute=settings.RESUMEN_SEMANAL_CRON_MINUTE,
+        ),
+    },
 }
 
 # Definimos los módulos donde Celery buscará las tareas asíncronas automáticamente

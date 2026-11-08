@@ -32,3 +32,5 @@ def test_celery_inicializacion_correcta() -> None:
             celery_app.main == "caja_chica_workers"
         )  # <-- Cambiado de "workers" a "caja_chica_workers"
         assert celery_app.conf.broker_url == "redis://localhost:6379/0"
+        assert "backup-diario-sheet" in celery_app.conf.beat_schedule
+        assert "resumen-semanal-automatico" in celery_app.conf.beat_schedule

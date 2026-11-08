@@ -98,11 +98,22 @@ from services.politica_service import (
     detectar_respuesta_exportacion_baja,
     politica_aceptada_vigente,
 )
+from services.preferencias_service import (
+    TEXTO_ACTIVAR_CONFIRMADO,
+    TEXTO_STOP_CONFIRMADO,
+    detectar_activar_preferencias,
+    detectar_stop_preferencias,
+    en_horario_silencio,
+    guardar_preferencia_automaticos,
+    resumen_semanal_habilitado,
+)
 from services.presupuesto_service import (
+    calcular_gastado_mes,
     detectar_eliminar_presupuesto,
     detectar_presupuesto,
     eliminar_presupuesto,
     establecer_presupuesto,
+    verificar_y_alertar_presupuesto,
 )
 from services.reporte_service import (
     ZONA_CR,
@@ -119,6 +130,7 @@ from services.sheets_service import (
     migrar_suscripcion,
     obtener_consentimiento,
     obtener_suscripcion,
+    obtener_telefonos_con_acceso,
     obtener_transacciones_cliente,
     registrar_consentimiento,
     renombrar_pestana_cliente,
@@ -274,6 +286,32 @@ async def _guardar_transaccion_o_avisar(
     return False
 
 
+async def _evaluar_alerta_presupuesto(
+    transaction_data: dict[str, Any], sender_phone: str
+) -> str | None:
+    """
+    Paso 4 (P1-1): evalúa la alerta 80/100% del presupuesto tras guardar un gasto.
+    Devuelve el mensaje listo para enviar o None. Nunca rompe el flujo financiero.
+    """
+    if str(transaction_data.get("tipo_movimiento") or "").lower() != "gasto":
+        return None
+    categoria = str(transaction_data.get("categoria") or "").strip()
+    if not categoria:
+        return None
+    try:
+        filas = await obtener_transacciones_cliente(sender_phone)
+        total_mes = calcular_gastado_mes(filas, categoria)
+        return await verificar_y_alertar_presupuesto(
+            sender_phone,
+            categoria,
+            int(transaction_data.get("monto") or 0),
+            total_mes,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("presupuesto: no se pudo evaluar la alerta (%s)", exc)
+        return None
+
+
 def _formatear_movimiento(fila: list[str]) -> str:
     """Formatea una fila de la pestaña del cliente para el mensaje de exportación (6.5.3)."""
     fecha = fila[0] if len(fila) > 0 else ""
@@ -346,19 +384,36 @@ async def _procesar_presupuesto(sender_phone: str, transcripcion: str) -> bool:
     presupuesto = detectar_presupuesto(transcripcion)
     if presupuesto:
         cat_nueva, limite = presupuesto
-        await establecer_presupuesto(sender_phone, cat_nueva, limite)
-        await enviar_mensaje_whatsapp(
-            to_phone=sender_phone,
-            mensaje=f"Presupuesto {cat_nueva}: ₡{limite:,}/mes guardado.",
+        guardado = await establecer_presupuesto(sender_phone, cat_nueva, limite)
+        mensaje = (
+            f"Presupuesto {cat_nueva}: ₡{limite:,}/mes guardado."
+            if guardado
+            else "No pude guardar el presupuesto ahora. Intentá de nuevo en unos segundos."
         )
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=mensaje)
         return True
 
     cat_eliminar = detectar_eliminar_presupuesto(transcripcion)
     if cat_eliminar:
-        await eliminar_presupuesto(sender_phone, cat_eliminar)
+        eliminado = await eliminar_presupuesto(sender_phone, cat_eliminar)
+        mensaje = (
+            f"Presupuesto eliminado: {cat_eliminar}."
+            if eliminado
+            else f"No encontré un presupuesto de {cat_eliminar} para borrar."
+        )
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=mensaje)
+        return True
+
+    # Si claramente quiso fijar un presupuesto pero no se pudo leer el monto
+    # (típico de transcripciones), no caemos al mensaje genérico de "no es un gasto".
+    if " ".join(transcripcion.lower().split()).startswith("presupuesto"):
+        logger.info("presupuesto: intención detectada pero monto ilegible.")
         await enviar_mensaje_whatsapp(
             to_phone=sender_phone,
-            mensaje=f"Presupuesto eliminado: {cat_eliminar}.",
+            mensaje=(
+                "Entendí que querés fijar un presupuesto, pero no pude leer el monto. "
+                "Mandalo así: presupuesto transporte 20000."
+            ),
         )
         return True
 
@@ -594,6 +649,19 @@ async def _procesar_pipeline(
             )
         return file_path or ""
 
+    # 2.2 Paso 4 Sprint — preferencias de mensajes automáticos (STOP/activar).
+    #     Va antes de onboarding/ARCO para que el cliente pueda pausar los
+    #     automáticos en cualquier momento (los datos no se tocan).
+    if detectar_stop_preferencias(transcripcion):
+        await guardar_preferencia_automaticos(sender_phone, False)
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_STOP_CONFIRMADO)
+        return file_path or ""
+
+    if detectar_activar_preferencias(transcripcion):
+        await guardar_preferencia_automaticos(sender_phone, True)
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=TEXTO_ACTIVAR_CONFIRMADO)
+        return file_path or ""
+
     # 2.5 Fase 6.1 - Cambio de número (spec 5.6): inicio desde el número actual
     if detectar_recuperacion_manual(transcripcion):
         logger.warning("cambio_numero: recuperación manual solicitada por %s", sender_phone)
@@ -777,9 +845,13 @@ async def _procesar_pipeline(
         if not await _guardar_transaccion_o_avisar(transaction_data, sender_phone):
             return file_path or ""
 
+    alerta_presupuesto = await _evaluar_alerta_presupuesto(transaction_data, sender_phone)
+
     resumen = await _finalizar_onboarding_si_corresponde(sender_phone, transaction_data)
     if resumen is not None:
         await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=resumen)
+        if alerta_presupuesto:
+            await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=alerta_presupuesto)
         return file_path or ""
 
     await enviar_mensaje_whatsapp(
@@ -789,6 +861,8 @@ async def _procesar_pipeline(
             f"₡{transaction_data['monto']}"
         ),
     )
+    if alerta_presupuesto:
+        await enviar_mensaje_whatsapp(to_phone=sender_phone, mensaje=alerta_presupuesto)
     return file_path or ""
 
 
@@ -858,3 +932,59 @@ def crear_backup_task() -> str:
         return "ERROR"
     logger.info(f"crear_backup_task: backup generado en {ruta}.")
     return str(ruta)
+
+
+# ==========================================
+# Paso 4 Sprint — Resumen semanal automático (notificaciones)
+# ==========================================
+async def _enviar_resumenes_semanales() -> dict[str, int]:
+    """
+    Envía el resumen de la última semana a cada cliente con suscripción vigente y
+    preferencia activa. Respeta el horario de silencio (22:00–06:59 CR) y no envía
+    si el cliente no tiene movimientos en la ventana. Un fallo no frena al resto.
+    """
+    resultado = {"enviados": 0, "omitidos": 0, "errores": 0}
+    if en_horario_silencio():
+        logger.info("resumen semanal: omitido por horario de silencio (22:00–07:00 CR).")
+        return resultado
+
+    telefonos = await obtener_telefonos_con_acceso()
+    ahora = datetime.now(ZONA_CR)
+    for telefono in telefonos:
+        try:
+            if not await resumen_semanal_habilitado(telefono):
+                resultado["omitidos"] += 1
+                continue
+            filas = await obtener_transacciones_cliente(telefono)
+            if not filas:
+                resultado["omitidos"] += 1
+                continue
+            resumen = calcular_resumen(filas, "semana", ahora)
+            for bloque in dividir_mensaje_largo(formatear_texto(resumen)):
+                await enviar_mensaje_whatsapp(to_phone=telefono, mensaje=bloque)
+            resultado["enviados"] += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("resumen semanal: error con %s (%s)", telefono, exc)
+            resultado["errores"] += 1
+    logger.info(
+        "resumen semanal: enviados=%d omitidos=%d errores=%d",
+        resultado["enviados"],
+        resultado["omitidos"],
+        resultado["errores"],
+    )
+    return resultado
+
+
+@celery_app.task(name="workers.tasks.enviar_resumenes_semanales_task")  # type: ignore[untyped-decorator]
+def enviar_resumenes_semanales_task() -> str:
+    """
+    Paso 4 Sprint — resumen semanal automático programado por Celery beat
+    (lunes 08:00 CR por defecto, configurable). Usa el mismo formateador del
+    reporte por chat; si WhatsApp falla, el error se registra y no frena al resto.
+    """
+    resultado = asyncio.run(_enviar_resumenes_semanales())
+    return (
+        f"enviados={resultado['enviados']} "
+        f"omitidos={resultado['omitidos']} "
+        f"errores={resultado['errores']}"
+    )
