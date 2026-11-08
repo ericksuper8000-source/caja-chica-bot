@@ -49,11 +49,14 @@ class Settings(BaseSettings):
     BACKUP_CRON_HOUR: int = Field(default=23)
     BACKUP_CRON_MINUTE: int = Field(default=0)
 
-    # Operación (Paso 1): alertas de salud por WhatsApp.
-    # ADMIN_PHONE recibe la alerta si /health deja de responder (formato 506...).
+    # Paso 1 de operación — monitoreo de salud y alertas.
+    # ADMIN_PHONE recibe la alerta por WhatsApp cuando /health deja de responder.
+    # HEALTHCHECK_URL es la URL interna que consulta el worker dentro de Docker.
     ADMIN_PHONE: str = Field(default="")
     HEALTHCHECK_URL: str = Field(default="http://app:8000/health")
-    # Seguridad #10: máximo de mensajes por teléfono por minuto (0 desactiva el control).
+
+    # Seguridad #10 / P2-1 — límite de mensajes por teléfono (no por IP).
+    # 20/minuto es holgado para una conversación normal y corta el abuso/loop.
     RATE_LIMIT_MENSAJES_POR_MINUTO: int = Field(default=20)
 
     # Paso 4 Sprint — resumen semanal automático (Celery beat, hora de Costa Rica).
