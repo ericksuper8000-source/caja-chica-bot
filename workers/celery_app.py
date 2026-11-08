@@ -44,6 +44,12 @@ celery_app.conf.beat_schedule = {
             minute=settings.RESUMEN_SEMANAL_CRON_MINUTE,
         ),
     },
+    # Paso 1 de operación — monitoreo de salud cada 5 minutos. El worker consulta
+    # el /health de la app y alerta por WhatsApp solo en la transición a caído.
+    "monitoreo-salud": {
+        "task": "workers.tasks.verificar_salud_task",
+        "schedule": crontab(minute="*/5"),
+    },
 }
 
 # Definimos los módulos donde Celery buscará las tareas asíncronas automáticamente

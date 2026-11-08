@@ -32,3 +32,8 @@ celerybeat-schedule*
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+# Test outputs
+test_result.txt
+test_results.txt
+# Local environment files
+.env.local
